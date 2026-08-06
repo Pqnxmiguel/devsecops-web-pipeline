@@ -48,6 +48,12 @@ export function createScanService({ sources, historyRepository, useMock }) {
 
       const applicable = sources.filter((source) => source.supports(ioc.type));
       if (applicable.length === 0) {
+        // Caso limite hermano de `unknown`, resuelto en el otro extremo: aqui
+        // no se intento nada, asi que no hay Scan que registrar ni veredicto
+        // que emitir. Es un fallo de configuracion del servidor (503), no un
+        // resultado del analisis; un 200 con `unknown` diria "lo miramos y no
+        // sabemos" cuando la verdad es "no lo miramos". Lo que ambos caminos
+        // comparten es el invariante: ninguno puede producir `clean`.
         throw new AppError(`No hay ninguna fuente configurada para IOCs de tipo "${ioc.type}".`, {
           status: 503,
           code: 'NO_SOURCE_AVAILABLE',

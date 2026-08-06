@@ -105,6 +105,54 @@ describe('scanService', () => {
     expect((await service.scan('ip', '192.0.2.1')).verdict.confidence).toBe(0);
   });
 
+  it('returns an unknown verdict -- not clean -- when the only source is degraded', async () => {
+    const service = serviceWith([
+      stubSource('s', 'ip', async () => {
+        throw new SourceError('down', { source: 's', kind: 'timeout' });
+      }),
+    ]);
+    const scan = await service.scan('ip', '192.0.2.1');
+    expect(scan.verdict).toMatchObject({ level: 'unknown', score: null });
+  });
+
+  it('returns unknown when the source is rate limited (exhausted daily quota)', async () => {
+    const service = serviceWith([
+      stubSource('abuseipdb', 'ip', async () => {
+        throw new SourceError('429', { source: 'abuseipdb', kind: 'rate_limit' });
+      }),
+    ]);
+    const scan = await service.scan('ip', '203.0.113.66');
+    expect(scan.verdict.level).toBe('unknown');
+  });
+
+  it('still lists the degraded source in sources[] so the client can see why', async () => {
+    const service = serviceWith([
+      stubSource('s', 'ip', async () => {
+        throw new SourceError('429', { source: 's', kind: 'rate_limit' });
+      }),
+    ]);
+    const scan = await service.scan('ip', '192.0.2.1');
+    expect(scan.sources).toHaveLength(1);
+    expect(scan.sources[0]).toMatchObject({
+      source: 's',
+      degraded: true,
+      level: 'unknown',
+      details: { reason: 'rate_limit' },
+    });
+  });
+
+  it('keeps the answering source verdict and lowers confidence when a sibling degrades', async () => {
+    const service = serviceWith([
+      stubSource('good', 'ip', async () => cleanReport('good')),
+      stubSource('bad', 'ip', async () => {
+        throw new SourceError('down', { source: 'bad', kind: 'timeout' });
+      }),
+    ]);
+    const scan = await service.scan('ip', '192.0.2.1');
+    expect(scan.verdict.level).toBe('clean');
+    expect(scan.verdict.confidence).toBe(0.25); // 0.5 de media * 0.5 de cobertura
+  });
+
   it('degrades an unexpected non-SourceError failure too', async () => {
     const service = serviceWith([
       stubSource('s', 'ip', async () => {

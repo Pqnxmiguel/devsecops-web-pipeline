@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config/index.js';
@@ -197,5 +197,91 @@ describe('unsupported scan types', () => {
   it('answers 404 for a scan type that does not exist', async () => {
     const response = await request(app).post('/api/scan/url').send({ value: 'x' });
     expect(response.status).toBe(404);
+  });
+});
+
+/**
+ * Modo real con todas las fuentes caidas. Es el escenario de OBS-2: la cuota
+ * diaria de AbuseIPDB se agota y a partir de ahi ninguna consulta se evalua.
+ * Se simula tumbando `fetch`, no la capa de dominio, para que el camino
+ * ejercitado sea el de produccion completo.
+ */
+describe('POST /api/scan/* with every source down (real mode)', () => {
+  let degradedApp;
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', () => Promise.reject(new TypeError('fetch failed')));
+    degradedApp = createApp(
+      loadConfig({
+        USE_MOCK_SOURCES: 'false',
+        ABUSEIPDB_API_KEY: 'test-key',
+        VIRUSTOTAL_API_KEY: 'test-key',
+        SOURCE_TIMEOUT_MS: '200',
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('still answers 200 so the client always has something to render', async () => {
+    const response = await request(degradedApp).post('/api/scan/ip').send({ value: '203.0.113.66' });
+    expect(response.status).toBe(200);
+  });
+
+  it('returns an unknown verdict for a known-malicious address instead of clean', async () => {
+    const { body } = await request(degradedApp)
+      .post('/api/scan/ip')
+      .send({ value: '203.0.113.66' });
+    expect(body.verdict.level).toBe('unknown');
+    expect(body.verdict.level).not.toBe('clean');
+  });
+
+  it('carries a null score, not a zero that reads as "least malicious"', async () => {
+    const { body } = await request(degradedApp)
+      .post('/api/scan/ip')
+      .send({ value: '203.0.113.66' });
+    expect(body.verdict.score).toBeNull();
+  });
+
+  it('reports zero confidence', async () => {
+    const { body } = await request(degradedApp)
+      .post('/api/scan/ip')
+      .send({ value: '203.0.113.66' });
+    expect(body.verdict.confidence).toBe(0);
+  });
+
+  it('keeps the degraded source visible with its reason', async () => {
+    const { body } = await request(degradedApp)
+      .post('/api/scan/ip')
+      .send({ value: '203.0.113.66' });
+    expect(body.sources[0]).toMatchObject({
+      source: 'abuseipdb',
+      degraded: true,
+      level: 'unknown',
+      details: { reason: 'unavailable' },
+    });
+  });
+
+  it('returns unknown for hashes too', async () => {
+    const { body } = await request(degradedApp)
+      .post('/api/scan/hash')
+      .send({ value: '44d88612fea8a8f36de82e1278abb02f' });
+    expect(body.verdict.level).toBe('unknown');
+  });
+
+  it('returns unknown for domains too', async () => {
+    const { body } = await request(degradedApp)
+      .post('/api/scan/domain')
+      .send({ value: 'malicious.example' });
+    expect(body.verdict.level).toBe('unknown');
+  });
+
+  it('marks the scan as not mocked so the history can tell them apart', async () => {
+    const { body } = await request(degradedApp)
+      .post('/api/scan/ip')
+      .send({ value: '203.0.113.66' });
+    expect(body.mock).toBe(false);
   });
 });
