@@ -107,8 +107,48 @@ describe('isValidDomain', () => {
     expect(isValidDomain('ejemplo.com; rm -rf /')).toBe(false);
   });
 
-  it('completes quickly on a long adversarial input instead of backtracking', () => {
-    const adversarial = `${'a-'.repeat(5000)}!`;
+  it('rejects an over-long input via the length guard, before parsing', () => {
+    // MAX_DOMAIN_LENGTH = 253. Cualquier cosa mas larga sale en la primera
+    // comparacion; este test cubre la guarda, no el parseo.
+    expect(isValidDomain(`${'a-'.repeat(5000)}!`)).toBe(false);
+  });
+
+  // Red de regresion contra ReDoS.
+  //
+  // El input DEBE sobrevivir la guarda de longitud (<= 253) para que el bucle
+  // de parseo se ejecute de verdad. Un input de 10.000 chars retorna tras una
+  // sola comparacion de enteros y no prueba absolutamente nada.
+  //
+  // La forma de abajo (N etiquetas de un char + un char final invalido) es el
+  // input que hace explotar el regex de validacion de dominio mas copiado de
+  // internet, /^([a-zA-Z0-9]+([\-\.]{1}[a-zA-Z0-9]+)*\.)+[a-zA-Z]{2,}$/, cuyo
+  // grupo interno opcional es ambiguo con el `+` externo. Medido en Node 22:
+  //
+  //     18 etiquetas ( 37 chars) ->     33 ms
+  //     22 etiquetas ( 45 chars) ->    607 ms
+  //     26 etiquetas ( 53 chars) ->  9.233 ms
+  //    125 etiquetas (251 chars) ->  no termina
+  //
+  // Es decir: duplica cada ~2 etiquetas, y la guarda de 253 chars NO protege.
+  // Si alguien refactoriza isValidDomain a ese regex, este test lo atrapa.
+  it('parses a max-length adversarial input in linear time (no backtracking)', () => {
+    // 125 etiquetas validas + una final invalida: recorre el bucle entero
+    // antes de fallar. 251 chars, justo bajo el limite.
+    const adversarial = `${'a.'.repeat(125)}!`;
+    expect(adversarial.length).toBeLessThanOrEqual(253);
+
+    const startedAt = performance.now();
+    expect(isValidDomain(adversarial)).toBe(false);
+    expect(performance.now() - startedAt).toBeLessThan(50);
+  });
+
+  it('parses a full-traversal input in linear time (fails only at the TLD)', () => {
+    // Tres etiquetas de 63 chars (el maximo) que pasan todas, y un TLD
+    // numerico que falla en el ultimo bucle: el peor caso de trabajo util.
+    const label = `${'a-'.repeat(31)}a`;
+    const adversarial = `${label}.${label}.${label}.123`;
+    expect(adversarial.length).toBeLessThanOrEqual(253);
+
     const startedAt = performance.now();
     expect(isValidDomain(adversarial)).toBe(false);
     expect(performance.now() - startedAt).toBeLessThan(50);
