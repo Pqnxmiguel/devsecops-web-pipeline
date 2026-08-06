@@ -58,6 +58,24 @@ export function haloClassFor(state: MascotState, level: VerdictLevel | null): st
 }
 
 /**
+ * Color de "amenaza" para capas puramente decorativas que no son la mascota
+ * (ver `components/fx/ThreatBackdrop.tsx`, el fondo ambiental de araña +
+ * telarañas) — MISMO switch de nivel⇄color que `haloClassFor`, nunca un
+ * mapeo paralelo. A diferencia de `haloClassFor` (que arma un `box-shadow`
+ * puntual para el halo de la mascota), acá se devuelve una clase de texto
+ * (`text-pixel-*`) para que `currentColor` se propague al SVG del fondo. Sólo
+ * tokens ya declarados en `tailwind.config.js` — nunca un color suelto.
+ */
+export function threatTintClassFor(state: MascotState, level: VerdictLevel | null): string {
+  if (state === 'confused') return 'text-pixel-unknown';
+  if (state === 'calm') return 'text-pixel-clean';
+  if (state === 'alert') return level === 'malicious' ? 'text-pixel-malicious' : 'text-pixel-suspicious';
+  // idle/scanning: sin veredicto todavía — tono neutro, nunca uno de los
+  // colores de veredicto.
+  return 'text-pixel-slate';
+}
+
+/**
  * Nombres de clase COMPLETOS y literales (no template strings) para que el
  * escaneo estático de Tailwind los detecte — `animate-mascot-${state}` no
  * funcionaría porque Tailwind no evalúa JS, sólo busca substrings exactos.

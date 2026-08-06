@@ -430,3 +430,94 @@ y `components/mascot/mascotState.ts` (el contrato de 4 estados + `assertUnreacha
 se modificaron. `App.tsx`, `ScanForm.tsx` (eliminado, reemplazado por `ChatComposer.tsx` +
 `useConversation.ts`) y `VerdictPanel.tsx` (eliminado, reemplazado por `VerdictMessage.tsx`)
 sí se reemplazaron por completo, como autorizaba la consigna del rediseño.
+
+> **Nota de vigencia:** `hooks/useHistory.ts` sí se eliminó después, en §10 — la lista de
+> "preservados sin tocar" de arriba describe el estado de esa entrega puntual, no el actual.
+
+## 10. Sin sidebar de historial — sólo el chat, y un fondo ambiental nuevo
+
+Feedback textual tras probar el rediseño de §9: *"No tiene sentido el historial si es un
+chat, borremos ese historial y dejemos solo el chat"* y *"De fondo del chat quiero una
+araña y en espacios libres telerañas igual que tengan glitch de color de amenaza como lo
+tiene el personaje."* Dos cambios puntuales sobre el chat de §9, no otro rediseño completo.
+
+### 10.1 Historial eliminado, no reemplazado por nada
+
+El sidebar (`components/scan/History.tsx` + `hooks/useHistory.ts`) se borró por completo,
+junto con la columna del grid (`grid-cols-[16rem_1fr]`) que lo alojaba en `App.tsx` — el
+layout pasa a ser un único `flex flex-col` a ancho completo. La conversación en curso
+(`useConversation`) sigue siendo la única "memoria" visible; no hay ningún reemplazo
+funcional del historial, como pedía explícitamente el feedback. `useConversation` perdió el
+callback `onExchangeSettled` (existía sólo para refrescar el sidebar tras cada intercambio)
+— se confirmó primero que ningún otro consumidor lo necesitaba antes de sacarlo.
+`GET /api/history` sigue vivo en el backend sin cambios: el frontend simplemente dejó de
+consumirlo, no es un endpoint que se haya dado de baja.
+
+### 10.2 Fondo ambiental — araña + telarañas con el mismo tinte de amenaza que la mascota
+
+El espacio libre que dejó el sidebar (los laterales de la columna de chat en viewports
+anchos, antes ocupados por el panel de historial) se llena con `components/fx/
+ThreatBackdrop.tsx`: una capa fija, `aria-hidden`, `pointer-events: none`, detrás de todo el
+contenido real, con una silueta de araña + telarañas de esquina a opacidad baja
+(`opacity-10` — dentro del rango 0.08–0.18 pedido) para que nunca compita con la
+legibilidad de los mensajes (las burbujas de chat siguen siendo bloques opacos por encima
+de esta capa, ver `MessageBubble.tsx`).
+
+**Los motivos** (`components/fx/spiderMotifs.tsx`) son SVG inline, no un sprite PNG nuevo:
+- `SpiderSilhouette`: dos bloques sólidos (cefalotórax + abdomen) + 8 patas, cada una un
+  quiebre de dos segmentos RECTOS (`M-L-L`, nunca una curva) — mismo lenguaje de "sprite"
+  de bordes duros que el resto de la identidad visual (§3), aplicado como vector porque es
+  un elemento puramente decorativo de baja opacidad que no necesita animarse fotograma a
+  fotograma como la mascota.
+- `WebMotif`: 8 hilos radiales (líneas rectas a ángulos exactos) + 3 anillos POLIGONALES
+  (nunca círculos concéntricos — una telaraña real es poligonal, no circular, así que esto
+  es a la vez más fiel al referente y consistente con "sin curvas suaves"), generados
+  proceduralmente con trigonometría en vez de coordenadas a mano. Se posicionan con su
+  CENTRO fuera del viewport (`-left-14 -top-14`, etc., sobre un contenedor con
+  `overflow-hidden`) para que sólo se vea el cuarto de tela que cae en cada esquina real —
+  el clásico look de telaraña de rincón.
+- Ambos usan `stroke="currentColor"` / `fill="currentColor"`, nunca un color propio: heredan
+  el tinte de quien los envuelve.
+
+**Mapeo de color — mismo switch que la mascota, nunca uno paralelo:**
+`components/mascot/mascotState.ts` gana `threatTintClassFor(state, level)`, hermano
+directo de `haloClassFor` (mismas ramas: `confused`→`text-pixel-unknown`,
+`calm`→`text-pixel-clean`, `alert`→`text-pixel-malicious`/`text-pixel-suspicious` según
+`level`, `idle`/`scanning`→`text-pixel-slate` neutro). La diferencia con `haloClassFor` es
+sólo la forma de salida: una clase de texto (`text-pixel-*`) en vez de un `box-shadow`,
+porque acá el color necesita propagarse a `currentColor` dentro del SVG, no pintar un halo
+puntual alrededor de un sprite. `App.tsx` le pasa a `ThreatBackdrop` exactamente el mismo
+`scanStatus`/`level` que ya calculaba para el header y para `<Mascot>` — ningún estado
+nuevo, ninguna fuente de verdad paralela.
+
+**Glitch — vocabulario reutilizado tal cual, cero clases nuevas:** `ThreatBackdrop` dispara
+la MISMA ráfaga de un solo ciclo que `Mascot.tsx` al revelarse un veredicto
+`malicious`/`unknown` (`fx-burst-malicious` / `fx-burst-unknown`, mismo flanco
+`loading → success`, mismas duraciones 560ms/480ms) y el MISMO temblor continuo en
+`confused`/`scanning` (`fx-jitter-confused` / `fx-jitter-scanning`) — las clases literales
+que ya existían en `styles/index.css`, aplicadas a un nodo distinto (el fondo en vez del
+sprite), nunca un sistema de efectos paralelo. `clean`/`suspicious` sólo cambian el tinte de
+color al instante (igual que `haloClassFor` con el halo de la mascota), sin ráfaga — mismo
+criterio de "no todo glitchea" que ya regía en §8.1. Misma disciplina de 3 nodos anidados
+que `Mascot.tsx` (jitter continuo → ráfaga de un ciclo → contenido) para que dos clases con
+`animation` en el mismo elemento no se cancelen entre sí.
+
+Como es reutilización literal de clases ya existentes, el bloque
+`@media (prefers-reduced-motion: reduce)` de `styles/index.css` las cubre automáticamente
+sin necesitar ningún agregado — se verificó con Playwright (`getComputedStyle(...)
+.animationName === 'none'` para `fx-jitter-confused`, `fx-jitter-scanning` y
+`fx-burst-malicious` con `prefers-reduced-motion: reduce` emulado) que el fondo también
+queda quieto, igual que la mascota y el resto de la capa CCTV.
+
+**Bug de stacking encontrado y corregido durante la verificación visual:** la primera
+versión posicionaba `ThreatBackdrop` con `position: fixed` y `z-index` NEGATIVO (`-z-10`)
+para garantizar que quedara detrás del contenido sin tener que tocar el stacking de
+`CameraChrome` ni de la columna de chat. Pero el `<div>` raíz de `App.tsx` tenía su propio
+`bg-pixel-bg` — al ser un elemento NO posicionado, ese fondo se pinta en el paso de
+"descendientes en flujo normal" del contexto de apilamiento, que ocurre DESPUÉS del paso de
+"descendientes con z-index negativo" (spec de CSS 2.1 §E.2), sin importar el anidamiento en
+el DOM. Resultado: el fondo opaco del `<div>` raíz tapaba por completo a `ThreatBackdrop`,
+invisible en la primera captura de Playwright. Fix: se sacó `bg-pixel-bg` del `<div>` raíz
+de `App.tsx` — el color final es idéntico porque `body` (el verdadero fondo del contexto de
+apilamiento raíz, ver `styles/index.css`) ya pinta ese mismo tono por debajo de todo,
+incluido cualquier descendiente con z-index negativo.

@@ -8,11 +8,6 @@ import {
   type ChatMessage,
 } from '../components/chat/chatMessages';
 
-interface UseConversationOptions {
-  /** Se llama cuando un intercambio termina (éxito o error) — el llamador decide si eso amerita refrescar el historial. */
-  onExchangeSettled?: () => void;
-}
-
 interface UseConversationResult {
   messages: ChatMessage[];
   submit: (rawValue: string) => void;
@@ -27,16 +22,20 @@ interface UseConversationResult {
  * de estado a mensajes de chat vía `conversationReducer`. La máquina de
  * mensajes en sí es pura y vive en `chatMessages.ts` (testeable sin montar
  * este hook).
+ *
+ * Ya no acepta un callback `onExchangeSettled`: existía sólo para refrescar
+ * el sidebar de historial, eliminado del frontend (el chat es la única
+ * "memoria" visible — ver docs/architecture/frontend-design.md §10). El
+ * endpoint `GET /api/history` del backend sigue vivo, simplemente no se
+ * consume desde acá.
  */
-export function useConversation({ onExchangeSettled }: UseConversationOptions = {}): UseConversationResult {
+export function useConversation(): UseConversationResult {
   const [messages, dispatch] = useReducer(conversationReducer, undefined, initialMessages);
   const { status, scan, error, run } = useScan();
   // El id del mensaje "typing" en vuelo, para poder reemplazarlo cuando el
   // scan resuelve. Un ref porque no dispara render por sí solo — sólo lo lee
   // el efecto de abajo.
   const pendingMessageId = useRef<string | null>(null);
-  const settledRef = useRef(onExchangeSettled);
-  settledRef.current = onExchangeSettled;
 
   const submit = useCallback(
     (rawValue: string) => {
@@ -66,11 +65,9 @@ export function useConversation({ onExchangeSettled }: UseConversationOptions = 
     if (status === 'success' && scan) {
       pendingMessageId.current = null;
       dispatch({ type: 'scan-succeeded', messageId, scan });
-      settledRef.current?.();
     } else if (status === 'error') {
       pendingMessageId.current = null;
       dispatch({ type: 'scan-failed', messageId, message: error ?? 'No se pudo contactar al servidor.' });
-      settledRef.current?.();
     }
   }, [status, scan, error]);
 
