@@ -205,3 +205,228 @@ cambia la preferencia del SO sin recargar la pestaña.
   que el jitter continuo del halo y la ráfaga puntual del burst no compitan por la misma
   propiedad `animation` en el mismo elemento — dos clases con `animation` en un solo nodo
   no se combinan, la última en cascada gana y la otra se pierde.
+
+---
+
+## 9. Rediseño — chat full-bleed + "cámara vieja de vigilancia" (REEMPLAZA el layout de paneles de §1-8)
+
+Feedback textual del usuario tras probar la primera versión: *"es como que estuviera 2
+cuadros en la mitad y a los lados nada"*. El layout centrado de §1-8 (columna angosta,
+`max-w-3xl`, formulario + panel de resultado apilados) se **descarta por completo**, no se
+ajusta. Lo que sigue es la dirección nueva. La paleta de 13 tokens (§1), la tipografía (§2),
+los bordes duros (§3), los 4 estados de la mascota (§4) y la disciplina de accesibilidad
+(§6) **siguen vigentes tal cual** — lo que cambia es la estructura (paneles → chat) y que la
+capa de glitch (§8) pasa de "ligada a eventos" a "corriendo todo el tiempo".
+
+### 9.1 Por qué un chat, no un formulario + panel
+
+Un formulario que se vacía tras cada consulta y un panel de resultado que reemplaza al
+anterior no dejan rastro de la conversación — cada scan nuevo borra el contexto del
+anterior salvo por el historial aparte. Un chat resuelve el vacío lateral del feedback
+**y** el problema de contexto a la vez: la columna central deja de ser un formulario
+flotando en el medio de la pantalla para ser una conversación que crece hacia abajo y
+ocupa todo el alto disponible, con el personaje "hablando" cada resultado en vez de
+mostrarlo en un panel estático. El historial se saca del flujo de mensajes a propósito
+(§9.3) — mezclar "conversación en curso" con "bitácora completa" en la misma lista haría
+ambas cosas peor.
+
+### 9.2 Sprite — de grilla ASCII a downsampling algorítmico de una foto real
+
+La referencia cambió de `imagen/personajeSpider.jpg` (ya no existe en disco) a
+`imagen/spider.png`: 509×704px, un chibi pixel-art ya "blocky" (grande, con bordes duros,
+prácticamente en escala de grises: unos ~207 tonos que en la práctica colapsan en 5 bandas
+de luminancia bien separadas — ver histograma comentado en
+`scripts/generate-mascot-sprite.mjs`).
+
+**Decisión: decodificar y reducir la imagen real, no redibujar la silueta a mano en ASCII**
+(que era el enfoque de §5, usado con la referencia JPG anterior). Razones:
+
+1. La imagen nueva es de calidad suficiente para hacerlo fielmente — el intento manual
+   anterior (§8.0) tuvo que iterar dos veces para aproximarse a la silueta real; partir de
+   los píxeles reales de una foto de mayor resolución elimina esa brecha de raíz.
+2. `scripts/generate-mascot-sprite.mjs` ya tenía un encoder PNG manual sin dependencias
+   (firma + chunks + `deflateSync` + CRC32 propio); decodificar es exactamente la mitad
+   simétrica (mismos chunks + `inflateSync` + revertir los 5 filtros de scanline de la
+   spec de PNG). Cero dependencias nuevas, mismo criterio que el resto del proyecto.
+3. Mantiene "cero dependencias también en la generación del arte", no sólo en su animación
+   en runtime (regla dura ya establecida en §5).
+
+**Pipeline** (`frontend/scripts/lib/png.mjs` + `generate-mascot-sprite.mjs` +
+`generate-favicon.mjs`):
+
+1. `decodePng`: parsea chunks, concatena `IDAT`, `zlib.inflateSync`, revierte los filtros
+   PNG (None/Sub/Up/Average/Paeth) scanline por scanline → buffer RGBA plano.
+2. Recorte al bounding box de píxeles con alfa ≥ 128 (la fuente trae margen transparente).
+3. **Downsampling nearest-neighbor** (nunca promediado/bilinear — es lo que preserva los
+   bordes duros del pixel art) a un frame de 32×40px. El frame ya NO es cuadrado: la
+   referencia real es más alta que ancha (bbox ≈ 484×669, ratio 0.72); 32×40 (ratio 0.8) se
+   acerca sin achatar la figura. El componente `Mascot` se actualizó para un frame no
+   cuadrado (`spriteSheet.ts` nuevo: `NATIVE_FRAME_W`/`NATIVE_FRAME_H` separados; antes
+   `NATIVE_FRAME` único de 16px cuadrado) — `size` ahora es el ALTO renderizado y el ancho
+   se deriva de la proporción real del frame.
+4. Cuantización por banda de luminancia a los tokens estructurales YA existentes en la
+   paleta (`pixel-bg`/`pixel-ink`/`pixel-ink2`/`pixel-slate` — cero colores nuevos): las
+   bandas oscuras (contorno, sombrero, abrigo) se mapean 1:1 a esos 4 tonos, y la banda
+   clara (177 en la imagen original: las gafas) se separa como región de "acento", la única
+   que cambia de color por estado — mismo mecanismo que la v1 manual, pero ahora aplicado
+   sobre una silueta real en vez de dibujada.
+5. Se generan 2 frames de animación por estado (parpadeo simple para idle/calm/alert;
+   patrón de gafas irregular para `confused`, igual criterio que antes) × 4 columnas
+   (idle/calm/alert/confused) → sheet de 128×80px.
+6. `generate-favicon.mjs` reutiliza el mismo pipeline pero recorta al bbox de la
+   **cabeza** (sombrero + gafas, ~62% superior de la figura) en vez del cuerpo completo,
+   para que la silueta reconocible no quede diminuta a tamaño de favicon.
+
+El resultado se inspeccionó ampliado 10× (`node --input-type=module` con un script
+temporal de escalado nearest-neighbor + el mismo `encodePng`) antes de integrarlo: las
+4 columnas muestran fielmente el sombrero fedora de ala ancha, las gafas ovaladas que se
+juntan en V al centro, y el abrigo con brazos plegados de la referencia — sensiblemente
+más fiel que el intento ASCII de §8.0, que es exactamente la hipótesis que motivó el
+cambio de enfoque.
+
+### 9.3 Layout — sidebar fijo + columna de chat, full-bleed
+
+```
+┌──────────────┬──────────────────────────────────────────────┐
+│              │  header: mascota mini + estado                │
+│  Historial   ├──────────────────────────────────────────────┤
+│  (alto       │  mensajes (scroll, crece hacia abajo)          │
+│  completo,   │   • personaje: saludo                          │
+│  16rem fijo) │        usuario →                               │
+│              │   • personaje: "revisando fuentes…" (typing)   │
+│  [debug      │   • personaje: veredicto (badges + filas)      │
+│   VULN-08]   ├──────────────────────────────────────────────┤
+│              │  composer (un input + enviar)                  │
+└──────────────┴──────────────────────────────────────────────┘
+     CameraChrome fijo por encima: esquinas HUD + REC + timestamp + viñeta
+```
+
+`grid-cols-[16rem_1fr]` en el contenedor raíz, `h-screen`/`overflow-hidden` — la app ocupa
+el viewport completo, sin columna centrada con `max-w-*`. El historial (`History.tsx`,
+restyleado, misma `useHistory` sin tocar) vive en el sidebar, nunca mezclado con los
+mensajes — sigue paginado y en el mismo orden que entrega el backend. El chat es la única
+zona que hace scroll; header y composer quedan fijos arriba/abajo de la columna central.
+
+**Conversación**: el personaje abre con un saludo pidiendo IP/hash/dominio
+(`chatMessages.ts::initialMessages`). El usuario escribe libre; `detectIocType` (sin
+tocar) decide el tipo — si no reconoce nada, el personaje pide aclarar en el mismo hilo
+(mensaje `unrecognized`) en vez de bloquear con un error de formulario. Si lo reconoce,
+aparece la burbuja del usuario + un indicador de "Revisando fuentes…" que reutiliza el
+estado `scanning` de la mascota (gafas parpadeando rápido) como pide la consigna; al
+resolver, ESA MISMA burbuja se reemplaza (no se agrega una nueva) por el veredicto —
+`conversationReducer` en `components/chat/chatMessages.ts` es una máquina de estados pura,
+sin React, testeada aparte de cualquier hook (`chatMessages.test.ts`).
+
+Cada mensaje del personaje trae su propio avatar de mascota con el estado que le
+corresponde A ESE MENSAJE (`scanStatus`/`level` explícitos por burbuja, mismo componente
+`Mascot`/`mascotState.ts` sin tocar) — así una burbuja de veredicto vieja se queda
+reaccionando a SU resultado aunque el usuario ya haya mandado otra consulta después.
+
+### 9.4 Veredicto enriquecido dentro de la burbuja
+
+El veredicto ya no es un panel aparte: es contenido estructurado (badge + `RiskMeter`
+reusado sin tocar + filas clave-valor) dentro de la burbuja del personaje
+(`VerdictMessage.tsx`), precedido por una frase en primera persona
+(`lib/verdictPresentation.ts::narrativeIntroFor`, switch exhaustivo por nivel — mismo
+criterio anti-regresión que `VerdictBadge`/`RiskMeter`) para que se lea como que el
+personaje está explicando el resultado, no como una tabla pegada.
+
+Los campos enriquecidos por fuente que el backend está agregando en paralelo
+(`categories`/`usageType`/`domain` para IP; `threatCategory`/`threatLabel`/`threatNames`
+para hash; `tags`/`threatType` para dominio) se leen a través de
+`verdictPresentation.ts::enrichedDetailRows`, que trata cada campo como
+`string | number | boolean | array | null | undefined` y nunca deja pasar `"undefined"` a
+pantalla: si ninguno está presente hoy (el backend aún no los shippeó, o la fuente no
+aplica), la fila se omite y `SourceReportCard` muestra "sin información adicional de la
+fuente" — cubierto por `verdictPresentation.test.ts` con los tres shapes (IP/hash/dominio)
+y el caso vacío/null/`[]`.
+
+`score: null` en `unknown` sigue sin poder leerse como "0/100" — `RiskMeter` no se tocó, y
+`chatMessages.test.ts` agrega una guarda de regresión propia que hace viajar un veredicto
+`unknown` completo por el reducer y confirma que `score` llega `null` intacto al mensaje.
+
+### 9.5 "Cámara vieja de vigilancia" — todo el tiempo, no sólo en alertas
+
+Pedido explícito: la sensación CCTV/terror sutil corre siempre, no sólo cuando hay un
+veredicto malicioso — y es lo que llena el borde de la pantalla que antes quedaba vacío.
+`components/fx/CameraChrome.tsx` (reemplaza a `GlitchOverlay.tsx`, eliminado) es un overlay
+fijo, `aria-hidden`, sobre toda la app:
+
+| Pieza | Qué es | Continuo/one-shot |
+|---|---|---|
+| Esquinas HUD | 4 marcos en L, chrome estático de Tailwind puro | estático |
+| REC | punto rojo + label, pulso 1.6s (0.625Hz) entre opacidad 1 y 0.55 | continuo, lento |
+| Timestamp | reloj real (`useCorruptedClock`, tick de 1s) que cada 6-11s corrompe UN dígito por ~400ms y se autocorrige | continuo (tick) + one-shot infrecuente (corrupción) |
+| Viñeta | radial-gradient estático a los bordes | estático |
+| Grano (`fx-grain`) | sólo `background-position` se anima (nunca opacidad) — cero cambio de luminancia total | continuo |
+| Rolling scanline (`fx-scan-roll`) | franja translúcida que baja en loop de 7s, opacidad FIJA en 0.10 | continuo, muy lento |
+| "Feed" del contenido (`fx-feed-jitter`, en el wrapper de sidebar+chat, NO en el chrome) | 1px de temblor + un dip de opacidad de ~6% cada 3.6s — el "corte de milisegundos" pedido | continuo, muy lento |
+| Burst por mensaje (`fx-burst-message`) | RGB split de 1px, 320ms, dispara en CADA mensaje nuevo del personaje | one-shot, alta frecuencia de disparo |
+| Bursts temáticos (`fx-burst-malicious`+`fx-noise-burst`, `fx-burst-unknown`+`fx-jitter-confused`) | los de §8, ahora aplicados sobre `VerdictMessage` en vez de `VerdictPanel` | one-shot |
+
+Decisión deliberada de diseño: el chrome (REC/timestamp/HUD) **no tiembla** — sólo el
+"feed" (sidebar+chat) lleva el jitter continuo, igual que una cámara de vigilancia real
+donde la superposición de texto en pantalla es estable aunque la imagen del sensor se
+degrade. Es lo que hace legible "esto es una interfaz sobre un feed", no ruido uniforme.
+
+**Por qué sigue siendo seguro para fotosensibilidad (WCAG 2.3.1), con MÁS disparos que
+antes:** la instrucción explícita fue subir la frecuencia sin subir intensidad/duración por
+disparo, y eso es exactamente lo que hace cada clase nueva:
+
+- Ningún efecto nuevo anima opacidad de un cuadro grande de pantalla en una banda de
+  3-60Hz. Los períodos continuos son 1s (grano, pero sin animar opacidad — sólo posición),
+  1.2s (puntos de tipeo), 1.6s (REC), 3.6s (feed jitter), 7s (scan-roll): todos muy por
+  debajo de cualquier lectura como parpadeo.
+- Los one-shot (`fx-burst-message`, 320ms) pueden repetirse en cada mensaje nuevo — la
+  frecuencia de disparo subió, como pedía el brief — pero cada ciclo individual sigue
+  siendo ≤ 320ms, amplitud de 1px/`drop-shadow` sin blur, exactamente el mismo criterio de
+  amplitud que ya tenían `fx-burst-malicious`/`fx-burst-unknown` en §8.3.
+- `fx-grain` es el caso límite más cuidado: se verificó explícitamente que SÓLO
+  `background-position` está en el `@keyframes`, nunca `opacity` — un patrón que se
+  desplaza sin cambiar su densidad total no produce ningún flash de luminancia,
+  sin importar cuántas veces por segundo se mueva.
+
+### 9.6 `prefers-reduced-motion` — ahora también apaga lo continuo
+
+El bloque de §8.2 sólo tenía que apagar ráfagas ligadas a eventos. Con la capa CCTV
+corriendo todo el tiempo, el bloque `@media (prefers-reduced-motion: reduce)` de
+`styles/index.css` creció para cubrir los 6 efectos nuevos, con la misma lógica de antes
+(congelar en un estado estático con sentido, no sólo apagar la animación a secas):
+
+- `fx-grain` → se queda como textura fija en `background-position: 0 0` (igual criterio
+  que `fx-scanlines`).
+- `fx-scan-roll` → `display: none` (no tiene una versión estática con sentido).
+- `fx-rec-pulse` → `opacity: 1` fijo (el REC se queda sólido, no parpadea).
+- `fx-typing-dot` → congelado visible pero quieto.
+- `fx-burst-message`/`fx-feed-jitter` → `animation: none`, sin ráfagas ni temblor.
+- `useCorruptedClock` verifica `prefers-reduced-motion` ANTES de programar el primer
+  temporizador de corrupción (mismo patrón que `useAmbientGlitch` en §8.2) — el reloj
+  real sigue funcionando (mostrar la hora no es "movimiento"), pero nunca se arma el
+  timer que le hace mostrar un dígito equivocado.
+- `usePrefersReducedMotion.ts` (nuevo) centraliza la lectura de `matchMedia` — antes vivía
+  duplicada dentro de `useAmbientGlitch`; ahora la comparten ese hook, `useCorruptedClock`
+  y cualquier efecto CCTV futuro.
+
+Verificado con Playwright forzando `prefers-reduced-motion: reduce` vía
+`page.emulateMedia()` y leyendo `getComputedStyle(...).animationName` de cada clase — ver
+el reporte de verificación de esta entrega.
+
+### 9.7 VULN-07/VULN-08 — dónde quedaron en el rediseño
+
+- **VULN-07 (CWE-79, XSS)** se movió de un `VerdictPanel` que ya no existe a
+  `VerdictMessage.tsx`: el "resumen técnico" del veredicto (`scan.verdict.summary`) se
+  renderiza con `dangerouslySetInnerHTML` sin sanitizar. Detalle completo:
+  `docs/vulnerabilities/VULN-07.md`.
+- **VULN-08 (CWE-200, API key en el bundle)** es nuevo en esta entrega:
+  `lib/insecureDirectAbuseIpdbCheck.ts` llama directo a AbuseIPDB desde el navegador con
+  una key hardcodeada, invocado sólo desde un botón de "debug" aislado en el sidebar
+  (`DirectCheckDebugPanel.tsx`) que nunca se dispara solo. Detalle completo:
+  `docs/vulnerabilities/VULN-08.md`.
+
+### 9.8 Qué se preservó sin tocar (por instrucción explícita)
+
+`lib/types.ts`, `lib/api.ts`, `lib/iocDetect.ts`, `hooks/useScan.ts`, `hooks/useHistory.ts`
+y `components/mascot/mascotState.ts` (el contrato de 4 estados + `assertUnreachable`) no
+se modificaron. `App.tsx`, `ScanForm.tsx` (eliminado, reemplazado por `ChatComposer.tsx` +
+`useConversation.ts`) y `VerdictPanel.tsx` (eliminado, reemplazado por `VerdictMessage.tsx`)
+sí se reemplazaron por completo, como autorizaba la consigna del rediseño.

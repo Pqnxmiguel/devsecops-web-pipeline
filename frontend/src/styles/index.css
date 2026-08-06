@@ -342,6 +342,162 @@
     }
   }
 
+  /* ============================================================
+     Capa "cámara vieja de vigilancia" — corre TODO EL TIEMPO, no sólo en un
+     veredicto. Ver docs/architecture/frontend-design.md "Dirección visual:
+     cámara vieja". Misma disciplina de amplitud/duración que arriba: nada de
+     parpadeo de luz-oscuridad, todo `transform`/`filter`/`opacity`/
+     `background-position` de amplitud mínima o de un solo ciclo corto.
+     ============================================================ */
+
+  /* Viñeta estática (chrome de visor de cámara) — sin animación, no hay nada
+     que degradar con reduced-motion. */
+  .fx-vignette {
+    z-index: 1;
+    opacity: 0.7;
+    background: radial-gradient(ellipse at center, transparent 55%, theme('colors.pixel.bg') 135%);
+  }
+
+  /* Grano de película: SÓLO la posición del patrón se anima (nunca su
+     opacidad) — así no hay ningún cambio de luminancia total del cuadro,
+     sólo un "arrastre" de textura. Es lo más seguro posible frente a
+     WCAG 2.3.1 y a la vez lo que más vende la sensación de VHS/CCTV viejo. */
+  .fx-grain {
+    z-index: 2;
+    opacity: 0.05;
+    mix-blend-mode: overlay;
+    background-image: repeating-conic-gradient(theme('colors.pixel.mist') 0% 25%, transparent 0% 50%);
+    background-size: 3px 3px;
+    animation: fx-grain-crawl 1s steps(6, jump-end) infinite;
+  }
+
+  @keyframes fx-grain-crawl {
+    0% {
+      background-position: 0 0;
+    }
+    100% {
+      background-position: 11px 7px;
+    }
+  }
+
+  /* Rolling scanline: una franja translúcida que recorre la pantalla de
+     arriba a abajo en loop lento (7s ⇒ muy por debajo de 3-60Hz) — el
+     clásico "roll" de una cinta VHS/CCTV vieja. Opacidad FIJA (0.10), sólo
+     se anima `transform`. */
+  .fx-scan-roll {
+    z-index: 3;
+    height: 160px;
+    opacity: 0.1;
+    background: linear-gradient(to bottom, transparent 0%, theme('colors.pixel.glow') 50%, transparent 100%);
+    animation: fx-scan-roll-move 7s linear infinite;
+  }
+
+  @keyframes fx-scan-roll-move {
+    0% {
+      transform: translateY(-160px);
+    }
+    100% {
+      transform: translateY(100vh);
+    }
+  }
+
+  /* Indicador REC: pulso LENTO (1.6s, ~0.625Hz) entre opacidad 1 y 0.55 —
+     "parpadeante pero no estroboscópico", nunca llega a apagarse del todo. */
+  .fx-rec-pulse {
+    animation: fx-rec-pulse 1.6s ease-in-out infinite;
+  }
+
+  @keyframes fx-rec-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.55;
+    }
+  }
+
+  /* Puntos de "escribiendo…" del indicador de tipeo — patrón de chat
+     estándar, amplitud de opacidad moderada pero periodo lento (1.2s) y sólo
+     tres elementos pequeños, no un área grande de pantalla. */
+  .fx-typing-dot {
+    animation: fx-typing-dot 1.2s ease-in-out infinite;
+  }
+
+  @keyframes fx-typing-dot {
+    0%,
+    80%,
+    100% {
+      opacity: 0.3;
+      transform: translateY(0);
+    }
+    40% {
+      opacity: 1;
+      transform: translateY(-2px);
+    }
+  }
+
+  /* Ráfaga neutra de UN SOLO ciclo: dispara en CADA mensaje nuevo del
+     personaje (ver `MascotMessage`), no sólo en veredictos — el pedido
+     explícito de subir la FRECUENCIA de disparo sin subir intensidad ni
+     duración por disparo. 320ms, 1px de desplazamiento máximo, sin ruido. */
+  .fx-burst-message {
+    animation: fx-burst-message 320ms steps(3, jump-end) 1 both;
+  }
+
+  @keyframes fx-burst-message {
+    0% {
+      filter: none;
+      transform: translateX(0);
+    }
+    35% {
+      filter: drop-shadow(1px 0 0 theme('colors.pixel.glow')) drop-shadow(-1px 0 0 theme('colors.pixel.slate'));
+      transform: translateX(-1px);
+    }
+    70% {
+      filter: drop-shadow(-1px 0 0 theme('colors.pixel.mist'));
+      transform: translateX(1px);
+    }
+    100% {
+      filter: none;
+      transform: translateX(0);
+    }
+  }
+
+  /* "Feed" de la cámara (contenido real: sidebar + chat, ver App.tsx) con
+     cortes de milisegundos / caída de frames CONSTANTE — la pieza central
+     del pedido de "sensación de terror todo el tiempo, no sólo en alertas".
+     Deliberadamente separado del chrome fijo (REC/timestamp/HUD no
+     tiemblan, como en una cámara real: el "sensor" judea, la superposición
+     de texto no). 1px de desplazamiento, un dip de opacidad de sólo ~6%,
+     ciclo de 3.6s (0.28Hz) — muy por debajo de cualquier banda de parpadeo. */
+  .fx-feed-jitter {
+    animation: fx-feed-jitter 3.6s steps(1, jump-end) infinite;
+  }
+
+  @keyframes fx-feed-jitter {
+    0%,
+    72%,
+    100% {
+      transform: translate(0, 0);
+      opacity: 1;
+    }
+    74% {
+      transform: translate(1px, 0);
+    }
+    76% {
+      transform: translate(-1px, 1px);
+      opacity: 0.94;
+    }
+    78% {
+      transform: translate(0, -1px);
+    }
+    80% {
+      transform: translate(0, 0);
+      opacity: 1;
+    }
+  }
+
   /* --- Accesibilidad fotosensible y `prefers-reduced-motion`: no negociable.
      Apaga toda animación automática de esta capa; las scanlines se quedan
      como una textura ESTÁTICA (sin `animation`) en vez de desaparecer del
@@ -356,7 +512,13 @@
     .fx-noise-burst::after,
     .fx-burst-unknown,
     .fx-jitter-confused,
-    .fx-jitter-scanning {
+    .fx-jitter-scanning,
+    .fx-grain,
+    .fx-scan-roll,
+    .fx-rec-pulse,
+    .fx-typing-dot,
+    .fx-burst-message,
+    .fx-feed-jitter {
       animation: none !important;
     }
 
@@ -366,6 +528,35 @@
 
     .fx-ambient {
       display: none;
+    }
+
+    /* Capa CCTV continua (ver "Dirección visual: cámara vieja"): el grano se
+       queda como textura ESTÁTICA de baja opacidad (mismo criterio que
+       scanlines), el roll de scanline desaparece (no tiene versión estática
+       con sentido), el REC se queda sólido en vez de pulsar, los puntos de
+       tipeo se congelan visibles pero quietos, y el "feed" deja de temblar
+       — el chrome (HUD/timestamp) ya era estático de por sí. */
+    .fx-grain {
+      opacity: 0.05;
+      background-position: 0 0;
+    }
+
+    .fx-scan-roll {
+      display: none;
+    }
+
+    .fx-rec-pulse {
+      opacity: 1;
+    }
+
+    .fx-typing-dot {
+      opacity: 0.7;
+      transform: none;
+    }
+
+    .fx-feed-jitter {
+      transform: none;
+      opacity: 1;
     }
   }
 }

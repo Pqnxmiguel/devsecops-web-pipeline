@@ -29,6 +29,22 @@ function asCount(value) {
 }
 
 /**
+ * Deduplica y extrae `.value` de una lista `popular_threat_name`/
+ * `popular_threat_category` de VirusTotal. Ausente o mal formada -> `[]`,
+ * nunca lanza: es narrativa de mejor esfuerzo, no un dato critico.
+ * @param {unknown} list
+ * @returns {string[]}
+ */
+function extractThreatValues(list) {
+  if (!Array.isArray(list)) return [];
+  const values = new Set();
+  for (const entry of list) {
+    if (typeof entry?.value === 'string') values.add(entry.value);
+  }
+  return [...values];
+}
+
+/**
  * Traduce la respuesta cruda de VirusTotal a un SourceReport.
  * @param {unknown} raw
  */
@@ -54,6 +70,8 @@ export function normalizeVirustotal(raw) {
       kind: 'bad_response',
     });
   }
+
+  const classification = raw.data.attributes.popular_threat_classification;
 
   const detections = malicious + suspicious * 0.5;
   const score = Math.min(100, Math.round((detections / totalEngines) * 100 * SCORE_AMPLIFICATION));
@@ -86,6 +104,9 @@ export function normalizeVirustotal(raw) {
       totalEngines,
       fileName: raw.data.attributes.meaningful_name ?? null,
       fileType: raw.data.attributes.type_description ?? null,
+      threatCategory: classification?.popular_threat_category?.[0]?.value ?? null,
+      threatLabel: classification?.suggested_threat_label ?? null,
+      threatNames: extractThreatValues(classification?.popular_threat_name),
     },
   });
 }

@@ -26,6 +26,34 @@ function isBlacklisted(blacklists) {
 }
 
 /**
+ * Union deduplicada de `entry.tags` a traves de todas las urls. Una URL sin
+ * `tags` (o con un valor que no es array) simplemente no aporta nada -- nunca
+ * lanza.
+ * @param {unknown[]} urls
+ * @returns {string[]}
+ */
+function extractTags(urls) {
+  const tags = new Set();
+  for (const entry of urls) {
+    if (!Array.isArray(entry?.tags)) continue;
+    for (const tag of entry.tags) tags.add(tag);
+  }
+  return [...tags];
+}
+
+/**
+ * `entry.threat` de la primera url que lo tenga, o `null` si ninguna.
+ * @param {unknown[]} urls
+ * @returns {string | null}
+ */
+function firstThreatType(urls) {
+  for (const entry of urls) {
+    if (typeof entry?.threat === 'string') return entry.threat;
+  }
+  return null;
+}
+
+/**
  * Traduce la respuesta cruda de URLhaus a un SourceReport.
  * @param {unknown} raw
  */
@@ -40,7 +68,7 @@ export function normalizeUrlhaus(raw) {
       // La ausencia de listado es una senal debil: URLhaus solo cubre
       // distribucion de malware, no phishing ni C2.
       confidence: 0.5,
-      details: { listed: false, totalUrls: 0, onlineUrls: 0 },
+      details: { listed: false, totalUrls: 0, onlineUrls: 0, tags: [], threatType: null },
     });
   }
 
@@ -74,6 +102,8 @@ export function normalizeUrlhaus(raw) {
       onlineUrls,
       blacklisted,
       firstSeen: raw.firstseen ?? null,
+      tags: extractTags(urls),
+      threatType: firstThreatType(urls),
     },
   });
 }

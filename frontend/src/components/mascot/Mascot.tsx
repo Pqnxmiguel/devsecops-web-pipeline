@@ -1,17 +1,14 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { VerdictLevel } from '../../lib/types';
 import { ANIMATION_CLASS, haloClassFor, mascotStateFor, SPRITE_COLUMN, STATE_LABEL } from './mascotState';
+import { NATIVE_FRAME_H, NATIVE_FRAME_W, SHEET_COLS, SHEET_ROWS } from './spriteSheet';
 
 interface MascotProps {
   scanStatus: 'idle' | 'loading' | 'success' | 'error';
   level: VerdictLevel | null;
-  /** Tamaño en px del sprite renderizado (cuadrado). El frame nativo es de 16px. */
+  /** Alto en px del sprite renderizado; el ancho se deriva de la proporción real del frame (32×40, no cuadrado — ver spriteSheet.ts). */
   size?: number;
 }
-
-const NATIVE_FRAME = 16; // px, ver scripts/generate-mascot-sprite.mjs
-const SHEET_COLS = 4;
-const SHEET_ROWS = 2;
 
 /** CSSProperties no declara variables custom (`--x`); se extiende localmente en vez de castear a `any`. */
 type StyleWithCssVars = CSSProperties & { '--mascot-frame'?: string };
@@ -46,7 +43,8 @@ const BURST_CLASS: Record<'malicious' | 'unknown', string> = {
 export function Mascot({ scanStatus, level, size = 128 }: MascotProps) {
   const state = mascotStateFor(scanStatus, level);
   const column = SPRITE_COLUMN[state];
-  const scale = size / NATIVE_FRAME;
+  const scale = size / NATIVE_FRAME_H;
+  const width = NATIVE_FRAME_W * scale;
 
   // Ráfaga de glitch al REVELARSE un veredicto malicious/unknown — se
   // dispara en el flanco `loading -> success`, no en cada render, así una
@@ -70,22 +68,22 @@ export function Mascot({ scanStatus, level, size = 128 }: MascotProps) {
   const burstClass = burst ? BURST_CLASS[burst] : '';
 
   const style: StyleWithCssVars = {
-    width: size,
+    width,
     height: size,
     backgroundImage: 'url(/sprites/mascot.png)',
     backgroundRepeat: 'no-repeat',
-    backgroundSize: `${NATIVE_FRAME * SHEET_COLS * scale}px ${NATIVE_FRAME * SHEET_ROWS * scale}px`,
-    backgroundPositionX: `${-column * size}px`,
-    // Variable que consume el @keyframes `mascot-cycle` (ver tailwind.config.js).
+    backgroundSize: `${NATIVE_FRAME_W * SHEET_COLS * scale}px ${NATIVE_FRAME_H * SHEET_ROWS * scale}px`,
+    backgroundPositionX: `${-column * width}px`,
+    // Variable que consume el @keyframes `mascot-cycle` (ver tailwind.config.js) — mueve por ALTO de frame, el ancho se fija aparte arriba.
     '--mascot-frame': `${size}px`,
   };
 
   return (
     <div
       className={`inline-block transition-shadow duration-300 ${haloClassFor(state, level)} ${continuousJitterClass}`}
-      style={{ width: size, height: size }}
+      style={{ width, height: size }}
     >
-      <div className={burstClass} style={{ width: size, height: size }}>
+      <div className={burstClass} style={{ width, height: size }}>
         <div
           role="img"
           aria-label={`Mascota: ${STATE_LABEL[state]}`}

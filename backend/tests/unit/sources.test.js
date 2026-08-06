@@ -89,6 +89,34 @@ describe('mock mode determinism', () => {
     expect(first.level).toBe(second.level);
   });
 
+  it('enriches the malicious pinned IP mock with narrative abuse fields', async () => {
+    const source = createAbuseipdbSource(mockOptions);
+    const report = await source.lookup(createIoc('ip', '203.0.113.66'));
+    expect(report.details.usageType).toBe('Data Center/Web Hosting/Transit');
+    expect(report.details.categories.length).toBeGreaterThan(0);
+    expect(report.details.categories).toEqual(expect.arrayContaining(['SSH', 'Brute-Force']));
+  });
+
+  it('enriches the clean pinned IP mock with an empty categories list', async () => {
+    const source = createAbuseipdbSource(mockOptions);
+    const report = await source.lookup(createIoc('ip', '192.0.2.1'));
+    expect(report.details.categories).toEqual([]);
+  });
+
+  it('enriches the malicious pinned hash mock with a known malware family', async () => {
+    const source = createVirustotalSource(mockOptions);
+    const report = await source.lookup(createIoc('hash', '44d88612fea8a8f36de82e1278abb02f'));
+    expect(report.details.threatCategory).toBe('trojan');
+    expect(report.details.threatNames).toEqual(expect.arrayContaining(['emotet', 'heodo']));
+  });
+
+  it('enriches the malicious pinned domain mock with tags and a threat type', async () => {
+    const source = createUrlhausSource(mockOptions);
+    const report = await source.lookup(createIoc('domain', 'malicious.example'));
+    expect(report.details.tags).toEqual(expect.arrayContaining(['elf', 'mirai']));
+    expect(report.details.threatType).toBe('malware_download');
+  });
+
   it('never contacts the network in mock mode', async () => {
     const source = createAbuseipdbSource({
       ...mockOptions,

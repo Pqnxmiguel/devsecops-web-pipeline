@@ -1,4 +1,5 @@
 import type { DegradedReason, SourceReport } from '../../lib/types';
+import { enrichedDetailRows } from '../../lib/verdictPresentation';
 import { VerdictBadge } from './VerdictBadge';
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -22,6 +23,7 @@ const REASON_LABEL: Record<DegradedReason, string> = {
 export function SourceReportCard({ report }: { report: SourceReport }) {
   const label = SOURCE_LABEL[report.source] ?? report.source;
   const reason = typeof report.details?.reason === 'string' ? (report.details.reason as DegradedReason) : null;
+  const enriched = report.degraded ? [] : enrichedDetailRows(report);
 
   return (
     <div
@@ -49,6 +51,26 @@ export function SourceReportCard({ report }: { report: SourceReport }) {
           </div>
         </dl>
       )}
+
+      {/* Campos enriquecidos opcionales (categories/usageType/domain,
+          threatCategory/threatLabel/threatNames, tags/threatType) — el
+          backend los agrega en paralelo; ver lib/verdictPresentation.ts.
+          Nunca degradado: una fuente caída no tiene enriquecimiento que
+          mostrar, ya cubierto arriba por el mensaje "Sin observación". */}
+      {!report.degraded ? (
+        <dl className="mt-2 pt-2 border-t border-pixel-ink2 flex flex-col gap-1 text-base font-mono-pixel text-pixel-mist">
+          {enriched.length > 0 ? (
+            enriched.map((row) => (
+              <div key={row.label} className="flex justify-between gap-3">
+                <dt className="text-pixel-fog shrink-0">{row.label}</dt>
+                <dd className="text-right break-words">{row.value}</dd>
+              </div>
+            ))
+          ) : (
+            <p className="text-pixel-fog italic">sin información adicional de la fuente</p>
+          )}
+        </dl>
+      ) : null}
     </div>
   );
 }

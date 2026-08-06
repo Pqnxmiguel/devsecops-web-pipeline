@@ -1,111 +1,94 @@
 /**
- * Genera `public/sprites/favicon.png`: recorte de 16x16 del frame `idle` del
- * mascot sprite, mismo encoder PNG mínimo que `generate-mascot-sprite.mjs`
- * (sin dependencias). Se mantiene como script separado y corto en vez de
- * factorizar un módulo compartido: es un one-off de build-time, no código de
- * producción.
+ * Genera `public/sprites/favicon.png`: downsampling nearest-neighbor directo
+ * de `imagen/spider.png` (mismo pipeline que `generate-mascot-sprite.mjs`,
+ * ver ese archivo para el detalle) a un cuadrado de `SIZE`px en el tono
+ * `idle` (gafas `pixel-fog`). Se recorta a cuadrado (en vez de heredar el
+ * frame 32×40 del sheet) porque un favicon vive en un contenedor cuadrado del
+ * navegador — usar el frame completo lo dejaría con letterboxing feo a esa
+ * escala tan pequeña.
  */
-import { deflateSync } from 'node:zlib';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { decodePng, encodePng, hexToRgb } from './lib/png.mjs';
 
-const SIZE = 16;
-const PALETTE = { '.': null, H: '#0a0a0f', h: '#1c1f2b', S: '#2a2e3f', B: '#1c1f2b' };
-const ACCENT = '#6b7280';
-const ACCENT_DIM = '#3d4256';
+const SOURCE_IMAGE = path.resolve(import.meta.dirname, '..', '..', 'imagen', 'spider.png');
+const SIZE = 32;
+const ACCENT = '#6b7280'; // pixel-fog, mismo tono `idle` que la columna 0 del sheet
 
-// Misma silueta que `generate-mascot-sprite.mjs` (frame `idle`, ver ese
-// archivo para el detalle de por qué calca imagen/personajeSpider.jpg).
-const BASE = [
-  '................',
-  '.......HHH......',
-  '......HhhH......',
-  '.....HhhhhH.....',
-  '....HhhhhhhH....',
-  '.HHHHHHHHHHHHHH.',
-  '...SSSSSSSSSS...',
-  '...BBAAAAAABB...',
-  '...BBBBBBBBBB...',
-  '..BBBBBBBBBBBB..',
-  '.BBBBBBBBBBBBBB.',
-  '..BBBBBBBB.BBBOO',
-  '..BBBBBBB..BB...',
-  '...BBBBBBBB.....',
-  '...BBB..BBB.....',
-  '..BBB.....BBB...',
-];
+const TOKEN = {
+  bg: '#0a0a0f',
+  ink: '#1c1f2b',
+  ink2: '#2a2e3f',
+  slate: '#3d4256',
+};
 
-function hexToRgb(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+const source = decodePng(readFileSync(SOURCE_IMAGE));
+
+function srcPixel(x, y) {
+  const i = (y * source.width + x) * 4;
+  return { r: source.pixels[i], g: source.pixels[i + 1], b: source.pixels[i + 2], a: source.pixels[i + 3] };
+}
+
+const ALPHA_THRESHOLD = 128;
+let minX = source.width;
+let maxX = 0;
+let minY = source.height;
+let maxY = 0;
+for (let y = 0; y < source.height; y += 1) {
+  for (let x = 0; x < source.width; x += 1) {
+    if (srcPixel(x, y).a < ALPHA_THRESHOLD) continue;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+}
+// Favicon cuadrado: se recorta al bbox de la CABEZA (sombrero + gafas), no al
+// cuerpo entero, para que la silueta reconocible (sombrero/gafas) no quede
+// diminuta dentro de un cuadrado que en su mayoría sería abrigo.
+const bboxW = maxX - minX + 1;
+const headH = Math.round((maxY - minY + 1) * 0.62); // el sombrero+gafas ocupa ~62% superior de la figura
+const cropSize = Math.min(bboxW, headH);
+const cropX = minX + Math.floor((bboxW - cropSize) / 2);
+const cropY = minY;
+
+function classify(x, y) {
+  const sx = cropX + Math.min(cropSize - 1, Math.floor(((x + 0.5) * cropSize) / SIZE));
+  const sy = cropY + Math.min(cropSize - 1, Math.floor(((y + 0.5) * cropSize) / SIZE));
+  const { r, g, b, a } = srcPixel(sx, sy);
+  if (a < ALPHA_THRESHOLD) return '.';
+  const lum = (r + g + b) / 3;
+  if (lum >= 110) return 'A';
+  if (lum >= 62) return 'L';
+  if (lum >= 35) return 'M';
+  if (lum >= 13) return 'I';
+  return 'K';
 }
 
 const pixels = new Uint8Array(SIZE * SIZE * 4);
-BASE.forEach((line, y) => {
-  line.split('').forEach((ch, x) => {
-    let rgb;
-    if (ch === 'A' || ch === 'O') rgb = hexToRgb(ACCENT);
-    else if (ch === 'a') rgb = hexToRgb(ACCENT_DIM);
-    else {
-      const hex = PALETTE[ch];
-      if (!hex) return;
-      rgb = hexToRgb(hex);
-    }
+for (let y = 0; y < SIZE; y += 1) {
+  for (let x = 0; x < SIZE; x += 1) {
+    const ch = classify(x, y);
+    if (ch === '.') continue;
+    const rgb =
+      ch === 'A'
+        ? hexToRgb(ACCENT)
+        : ch === 'K'
+          ? hexToRgb(TOKEN.bg)
+          : ch === 'I'
+            ? hexToRgb(TOKEN.ink)
+            : ch === 'M'
+              ? hexToRgb(TOKEN.ink2)
+              : hexToRgb(TOKEN.slate);
     const idx = (y * SIZE + x) * 4;
     pixels[idx] = rgb[0];
     pixels[idx + 1] = rgb[1];
     pixels[idx + 2] = rgb[2];
     pixels[idx + 3] = 255;
-  });
-});
-
-function crc32(buf) {
-  const table = crc32.table ?? (crc32.table = makeTable());
-  let crc = 0xffffffff;
-  for (let i = 0; i < buf.length; i += 1) {
-    const c = (crc ^ buf[i]) & 0xff;
-    crc = (crc >>> 8) ^ table[c];
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-  function makeTable() {
-    const t = new Uint32Array(256);
-    for (let n = 0; n < 256; n += 1) {
-      let cc = n;
-      for (let k = 0; k < 8; k += 1) cc = cc & 1 ? 0xedb88320 ^ (cc >>> 1) : cc >>> 1;
-      t[n] = cc >>> 0;
-    }
-    return t;
   }
 }
-
-function chunk(type, data) {
-  const typeBuf = Buffer.from(type, 'ascii');
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(data.length, 0);
-  const crcBuf = Buffer.alloc(4);
-  crcBuf.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
-  return Buffer.concat([len, typeBuf, data, crcBuf]);
-}
-
-const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-const ihdrData = Buffer.alloc(13);
-ihdrData.writeUInt32BE(SIZE, 0);
-ihdrData.writeUInt32BE(SIZE, 4);
-ihdrData[8] = 8;
-ihdrData[9] = 6;
-const ihdr = chunk('IHDR', ihdrData);
-
-const stride = SIZE * 4;
-const raw = Buffer.alloc((stride + 1) * SIZE);
-for (let y = 0; y < SIZE; y += 1) {
-  raw[y * (stride + 1)] = 0;
-  Buffer.from(pixels.buffer, y * stride, stride).copy(raw, y * (stride + 1) + 1);
-}
-const idat = chunk('IDAT', deflateSync(raw));
-const iend = chunk('IEND', Buffer.alloc(0));
-const png = Buffer.concat([signature, ihdr, idat, iend]);
 
 const outDir = path.resolve(import.meta.dirname, '..', 'public', 'sprites');
 mkdirSync(outDir, { recursive: true });
-writeFileSync(path.join(outDir, 'favicon.png'), png);
-console.log('Favicon generado.');
+writeFileSync(path.join(outDir, 'favicon.png'), encodePng(SIZE, SIZE, pixels));
+console.log(`Favicon generado (${SIZE}x${SIZE}px, recorte de cabeza ${cropSize}x${cropSize} en (${cropX},${cropY})).`);
