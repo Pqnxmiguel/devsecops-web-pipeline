@@ -1,0 +1,371 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-pixel-bg text-pixel-mist font-mono-pixel text-lg;
+    /* La fuente pixel escala mal con antialiasing subpixel: se prefiere el
+       renderizado por bloques del navegador para mantener el look retro. */
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  button {
+    @apply font-pixel;
+  }
+
+  ::selection {
+    @apply bg-pixel-unknown text-pixel-bg;
+  }
+
+  /* Foco visible y anguloso en cualquier elemento interactivo: accesibilidad
+     sin sacrificar la estética de bordes duros. */
+  :focus-visible {
+    outline: 2px solid theme('colors.pixel.glow');
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /* Requisito duro: sin esto el navegador antialiasa el sprite escalado y se
+     pierde el estilo pixel art. */
+  .pixelated {
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+  }
+
+  /* ============================================================
+     Capa de efectos "glitch". Ver docs/architecture/frontend-design.md §8
+     para la decisión de diseño completa (qué efecto va dónde y por qué).
+
+     Reglas duras que sigue TODO lo de abajo:
+     - Sólo `transform` / `filter` / `opacity` / `background-position` /
+       `background-size` (paint/composite, GPU) — nunca `width`/`height`/
+       `top`/`left` en bucle.
+     - Cualquier disparo automático es UN SOLO ciclo (`steps(N, jump-end) 1
+       both`) de <= 600ms, o es continuo pero de amplitud mínima (1-2px) y
+       periodo lento (>= 1.4s) — nada cae en la banda de parpadeo 3-60Hz de
+       WCAG 2.3.1, y nada es un área grande de pantalla con alto contraste
+       sostenido.
+     - Todo se apaga con `prefers-reduced-motion: reduce` (bloque final).
+     ============================================================ */
+
+  /* --- Scanlines base: textura fija, siempre presente, respiración lenta
+     (5s, variación de opacidad mínima) — el "aire" retro de fondo, sin
+     ningún riesgo de parpadeo por ser tan lenta. */
+  .fx-scanlines {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    pointer-events: none;
+    background-image: repeating-linear-gradient(
+      to bottom,
+      rgb(10 10 15 / 0.35) 0px,
+      rgb(10 10 15 / 0.35) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+    animation: fx-scanline-breathe 5s ease-in-out infinite;
+  }
+
+  @keyframes fx-scanline-breathe {
+    0%,
+    100% {
+      opacity: 0.16;
+    }
+    50% {
+      opacity: 0.26;
+    }
+  }
+
+  /* --- Glitch ambiental: capa fija sobre toda la app, disparada por
+     `useAmbientGlitch` (JS sólo decide EL CUÁNDO, con timing aleatorio; el
+     efecto en sí es 100% CSS). Combina ruido/estática (patrón conic-gradient
+     fino), "pixelación momentánea" (el patrón salta a un `background-size`
+     más grueso a mitad del ciclo y vuelve) y un guiño de RGB split
+     (`drop-shadow` sin blur, así no ensucia el pixel art). Las dos barras de
+     `::before`/`::after` son el "screen tear": se desplazan lateralmente y
+     vuelven, una sola vez. */
+  .fx-ambient {
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    pointer-events: none;
+    opacity: 0;
+    mix-blend-mode: overlay;
+    background-image: repeating-conic-gradient(theme('colors.pixel.mist') 0% 25%, transparent 0% 50%);
+    background-size: 3px 3px;
+  }
+
+  .fx-ambient.is-active {
+    animation: fx-ambient-burst 240ms steps(4, jump-end) 1 both;
+  }
+
+  .fx-ambient.is-active::before,
+  .fx-ambient.is-active::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 3px;
+    opacity: 0.5;
+    background: theme('colors.pixel.glow');
+  }
+
+  .fx-ambient.is-active::before {
+    top: 27%;
+    animation: fx-tear-shift 240ms steps(3, jump-end) 1 both;
+  }
+
+  .fx-ambient.is-active::after {
+    top: 64%;
+    animation: fx-tear-shift-reverse 240ms steps(3, jump-end) 1 both;
+  }
+
+  @keyframes fx-ambient-burst {
+    0% {
+      opacity: 0;
+      background-size: 3px 3px;
+      filter: none;
+    }
+    25% {
+      opacity: 0.1;
+      background-size: 14px 14px;
+      filter: drop-shadow(2px 0 0 theme('colors.pixel.glow'))
+        drop-shadow(-2px 0 0 theme('colors.pixel.slate'));
+    }
+    55% {
+      opacity: 0.06;
+      background-size: 3px 3px;
+      filter: none;
+    }
+    80% {
+      opacity: 0.12;
+      background-size: 9px 9px;
+    }
+    100% {
+      opacity: 0;
+      background-size: 3px 3px;
+      filter: none;
+    }
+  }
+
+  @keyframes fx-tear-shift {
+    0% {
+      transform: translateX(0);
+    }
+    50% {
+      transform: translateX(18px);
+    }
+    100% {
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes fx-tear-shift-reverse {
+    0% {
+      transform: translateX(0);
+    }
+    50% {
+      transform: translateX(-14px);
+    }
+    100% {
+      transform: translateX(0);
+    }
+  }
+
+  /* --- Ráfaga intensa, UN SOLO ciclo: veredicto `malicious`. Se aplica al
+     montar el panel/la mascota con ese resultado (React remonta el nodo por
+     `key`, así que el ciclo vuelve a correr en cada scan malicioso nuevo, no
+     sólo el primero). RGB split más marcado que el ambiental + jitter
+     horizontal — nunca parpadeo de opacidad brusco, así queda muy lejos del
+     umbral de WCAG 2.3.1 aunque sea "el más intenso" del set. */
+  .fx-burst-malicious {
+    animation: fx-burst-malicious 560ms steps(4, jump-end) 1 both;
+  }
+
+  @keyframes fx-burst-malicious {
+    0% {
+      filter: none;
+      transform: translateX(0);
+    }
+    15% {
+      filter: drop-shadow(3px 0 0 theme('colors.pixel.malicious')) drop-shadow(-3px 0 0 theme('colors.pixel.glow'));
+      transform: translateX(-3px);
+    }
+    35% {
+      filter: drop-shadow(-4px 0 0 theme('colors.pixel.malicious')) drop-shadow(3px 0 0 theme('colors.pixel.ink2'));
+      transform: translateX(3px);
+    }
+    55% {
+      filter: drop-shadow(2px 0 0 theme('colors.pixel.malicious'));
+      transform: translateX(-2px);
+    }
+    80% {
+      filter: drop-shadow(1px 0 0 theme('colors.pixel.malicious'));
+      transform: translateX(1px);
+    }
+    100% {
+      filter: none;
+      transform: translateX(0);
+    }
+  }
+
+  /* Ruido/estática superpuesto SOLO durante el burst `malicious` (nunca en
+     `unknown`, que se queda más "silencioso" — ver frontend-design.md §8).
+     Vive como pseudo-elemento del propio Card, sin marcado extra. */
+  .fx-noise-burst {
+    position: relative;
+  }
+
+  .fx-noise-burst::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: repeating-conic-gradient(theme('colors.pixel.fog') 0% 25%, transparent 0% 50%);
+    background-size: 3px 3px;
+    opacity: 0;
+    animation: fx-noise-flicker 560ms steps(5, jump-end) 1 both;
+  }
+
+  @keyframes fx-noise-flicker {
+    0%,
+    100% {
+      opacity: 0;
+      background-position: 0 0;
+    }
+    20% {
+      opacity: 0.18;
+      background-position: 1px 2px;
+    }
+    40% {
+      opacity: 0.1;
+      background-position: -2px 0;
+    }
+    60% {
+      opacity: 0.2;
+      background-position: 2px -1px;
+    }
+    80% {
+      opacity: 0.08;
+      background-position: 0 1px;
+    }
+  }
+
+  /* --- Ráfaga más suave, UN SOLO ciclo: veredicto `unknown`. Deliberadamente
+     sin ruido y con menos desplazamiento que `malicious` — "no se pudo
+     evaluar" no es lo mismo que "amenaza confirmada", el glitch tiene que
+     leerse distinto, no sólo más flojo. Violeta (`pixel-unknown`), igual que
+     el resto de la identidad de `confused`. */
+  .fx-burst-unknown {
+    animation: fx-burst-unknown 480ms steps(3, jump-end) 1 both;
+  }
+
+  @keyframes fx-burst-unknown {
+    0% {
+      filter: none;
+      transform: translateX(0) skewX(0deg);
+    }
+    30% {
+      filter: drop-shadow(2px 0 0 theme('colors.pixel.unknown')) drop-shadow(-2px 0 0 theme('colors.pixel.glow'));
+      transform: translateX(2px) skewX(1deg);
+    }
+    65% {
+      filter: drop-shadow(-2px 0 0 theme('colors.pixel.unknown'));
+      transform: translateX(-2px) skewX(-1deg);
+    }
+    100% {
+      filter: none;
+      transform: translateX(0) skewX(0deg);
+    }
+  }
+
+  /* --- Jitter continuo y errático: mascota en `confused`. Nada de opacidad
+     — sólo micro-desplazamientos de 1px en momentos irregulares del ciclo
+     (no una sinusoide suave), para que se sienta "entrecortado" en vez de
+     "respirando". Periodo de 2.4s: muy por debajo de cualquier banda de
+     parpadeo. */
+  .fx-jitter-confused {
+    animation: fx-jitter-confused 2.4s steps(1, jump-end) infinite;
+  }
+
+  @keyframes fx-jitter-confused {
+    0%,
+    78%,
+    100% {
+      transform: translate(0, 0);
+    }
+    80% {
+      transform: translate(1px, -1px);
+    }
+    83% {
+      transform: translate(-1px, 0);
+    }
+    86% {
+      transform: translate(0, 1px);
+    }
+    90% {
+      transform: translate(-1px, -1px);
+    }
+    93% {
+      transform: translate(0, 0);
+    }
+  }
+
+  /* --- Jitter continuo y sutil: mascota en `scanning`, como si el sistema
+     estuviera "procesando bajo carga". Un guiño de RGB split muy breve dentro
+     de cada ciclo de 1.4s, no un parpadeo — el resto del ciclo está quieto. */
+  .fx-jitter-scanning {
+    animation: fx-jitter-scanning 1.4s steps(1, jump-end) infinite;
+  }
+
+  @keyframes fx-jitter-scanning {
+    0%,
+    60%,
+    100% {
+      filter: none;
+    }
+    64% {
+      filter: drop-shadow(1px 0 0 theme('colors.pixel.glow'));
+    }
+    68% {
+      filter: none;
+    }
+  }
+
+  /* --- Accesibilidad fotosensible y `prefers-reduced-motion`: no negociable.
+     Apaga toda animación automática de esta capa; las scanlines se quedan
+     como una textura ESTÁTICA (sin `animation`) en vez de desaparecer del
+     todo, para no perder la identidad retro de base. */
+  @media (prefers-reduced-motion: reduce) {
+    .fx-scanlines,
+    .fx-ambient,
+    .fx-ambient.is-active,
+    .fx-ambient.is-active::before,
+    .fx-ambient.is-active::after,
+    .fx-burst-malicious,
+    .fx-noise-burst::after,
+    .fx-burst-unknown,
+    .fx-jitter-confused,
+    .fx-jitter-scanning {
+      animation: none !important;
+    }
+
+    .fx-scanlines {
+      opacity: 0.16;
+    }
+
+    .fx-ambient {
+      display: none;
+    }
+  }
+}
