@@ -26,6 +26,34 @@ function isBlacklisted(blacklists) {
 }
 
 /**
+ * Union deduplicada de `entry.tags` a traves de todas las urls. Una URL sin
+ * `tags` (o con un valor que no es array) simplemente no aporta nada -- nunca
+ * lanza.
+ * @param {unknown[]} urls
+ * @returns {string[]}
+ */
+function extractTags(urls) {
+  const tags = new Set();
+  for (const entry of urls) {
+    if (!Array.isArray(entry?.tags)) continue;
+    for (const tag of entry.tags) tags.add(tag);
+  }
+  return [...tags];
+}
+
+/**
+ * `entry.threat` de la primera url que lo tenga, o `null` si ninguna.
+ * @param {unknown[]} urls
+ * @returns {string | null}
+ */
+function firstThreatType(urls) {
+  for (const entry of urls) {
+    if (typeof entry?.threat === 'string') return entry.threat;
+  }
+  return null;
+}
+
+/**
  * Traduce la respuesta cruda de URLhaus a un SourceReport.
  * @param {unknown} raw
  */
@@ -40,7 +68,7 @@ export function normalizeUrlhaus(raw) {
       // La ausencia de listado es una senal debil: URLhaus solo cubre
       // distribucion de malware, no phishing ni C2.
       confidence: 0.5,
-      details: { listed: false, totalUrls: 0, onlineUrls: 0 },
+      details: { listed: false, totalUrls: 0, onlineUrls: 0, tags: [], threatType: null },
     });
   }
 
@@ -74,6 +102,8 @@ export function normalizeUrlhaus(raw) {
       onlineUrls,
       blacklisted,
       firstSeen: raw.firstseen ?? null,
+      tags: extractTags(urls),
+      threatType: firstThreatType(urls),
     },
   });
 }
@@ -82,14 +112,20 @@ export function normalizeUrlhaus(raw) {
  * @param {object} options
  * @param {boolean} options.useMock
  * @param {number} [options.timeoutMs]
- * @param {string} [options.authKey]  Opcional: abuse.ch pide `Auth-Key` en su API actual.
+ * @param {string} [options.authKey]  Sin tipo obligatorio en el arranque, pero en la practica
+ *   HOY ES REQUERIDA: la politica "Community First" de abuse.ch (2024-2025) devuelve 401
+ *   en toda la Host API sin `Auth-Key` -- ver backend/.env.example.
  * @param {typeof defaultFetchJson} [options.fetchJson]  Inyectable para tests.
+ * @param {ReturnType<typeof import('../quota/quotaTracker.js').createQuotaTracker>} [options.quotaTracker]
+ *   Solo se usa cuando `useMock` es false. URLhaus no tiene limite publicado:
+ *   `canConsume` siempre da `true` aca, el uso solo se registra para informar.
  */
 export function createUrlhausSource({
   useMock,
   timeoutMs,
   authKey,
   fetchJson = defaultFetchJson,
+  quotaTracker,
 }) {
   return {
     id: SOURCE_ID,
@@ -98,14 +134,32 @@ export function createUrlhausSource({
       if (useMock) {
         return normalizeUrlhaus(urlhausMockResponse(ioc));
       }
-      const raw = await fetchJson(ENDPOINT, {
-        source: SOURCE_ID,
-        timeoutMs,
-        method: 'POST',
-        form: { host: ioc.value },
-        headers: authKey ? { 'Auth-Key': authKey } : {},
-      });
-      return normalizeUrlhaus(raw);
+
+      // Nunca deberia dar `false` (URLhaus es `unlimited` en el tracker), pero
+      // se deja como red de seguridad simetrica con las otras dos fuentes.
+      if (quotaTracker && !quotaTracker.canConsume(SOURCE_ID)) {
+        throw new SourceError(
+          `La fuente ${SOURCE_ID} alcanzo su cuota diaria; no se intento la llamada real.`,
+          { source: SOURCE_ID, kind: 'rate_limit' },
+        );
+      }
+
+      try {
+        const raw = await fetchJson(ENDPOINT, {
+          source: SOURCE_ID,
+          timeoutMs,
+          method: 'POST',
+          form: { host: ioc.value },
+          headers: authKey ? { 'Auth-Key': authKey } : {},
+        });
+        quotaTracker?.recordUsage(SOURCE_ID);
+        return normalizeUrlhaus(raw);
+      } catch (error) {
+        if (quotaTracker && error instanceof SourceError && error.kind === 'rate_limit') {
+          quotaTracker.markExhausted(SOURCE_ID);
+        }
+        throw error;
+      }
     },
   };
 }

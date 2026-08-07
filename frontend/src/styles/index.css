@@ -1,0 +1,645 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-pixel-bg text-pixel-mist font-mono-pixel text-lg;
+    /* La fuente pixel escala mal con antialiasing subpixel: se prefiere el
+       renderizado por bloques del navegador para mantener el look retro. */
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  button {
+    @apply font-pixel;
+  }
+
+  ::selection {
+    @apply bg-pixel-unknown text-pixel-bg;
+  }
+
+  /* Foco visible y anguloso en cualquier elemento interactivo: accesibilidad
+     sin sacrificar la estética de bordes duros. */
+  :focus-visible {
+    outline: 2px solid theme('colors.pixel.glow');
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /* Requisito duro: sin esto el navegador antialiasa el sprite escalado y se
+     pierde el estilo pixel art. */
+  .pixelated {
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+  }
+
+  /* ============================================================
+     Capa de efectos "glitch". Ver docs/architecture/frontend-design.md §8
+     para la decisión de diseño completa (qué efecto va dónde y por qué).
+
+     Reglas duras que sigue TODO lo de abajo:
+     - Sólo `transform` / `filter` / `opacity` / `background-position` /
+       `background-size` (paint/composite, GPU) — nunca `width`/`height`/
+       `top`/`left` en bucle.
+     - Cualquier disparo automático es UN SOLO ciclo (`steps(N, jump-end) 1
+       both`) de <= 600ms, o es continuo pero de amplitud mínima (1-2px) y
+       periodo lento (>= 1.4s) — nada cae en la banda de parpadeo 3-60Hz de
+       WCAG 2.3.1, y nada es un área grande de pantalla con alto contraste
+       sostenido.
+     - Todo se apaga con `prefers-reduced-motion: reduce` (bloque final).
+     ============================================================ */
+
+  /* --- Scanlines base: textura fija, siempre presente, respiración lenta
+     (5s, variación de opacidad mínima) — el "aire" retro de fondo, sin
+     ningún riesgo de parpadeo por ser tan lenta. */
+  .fx-scanlines {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    pointer-events: none;
+    background-image: repeating-linear-gradient(
+      to bottom,
+      rgb(10 10 15 / 0.35) 0px,
+      rgb(10 10 15 / 0.35) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+    animation: fx-scanline-breathe 5s ease-in-out infinite;
+  }
+
+  @keyframes fx-scanline-breathe {
+    0%,
+    100% {
+      opacity: 0.16;
+    }
+    50% {
+      opacity: 0.26;
+    }
+  }
+
+  /* --- Glitch ambiental: capa fija sobre toda la app, disparada por
+     `useAmbientGlitch` (JS sólo decide EL CUÁNDO, con timing aleatorio; el
+     efecto en sí es 100% CSS). Combina ruido/estática (patrón conic-gradient
+     fino), "pixelación momentánea" (el patrón salta a un `background-size`
+     más grueso a mitad del ciclo y vuelve) y un guiño de RGB split
+     (`drop-shadow` sin blur, así no ensucia el pixel art). Las dos barras de
+     `::before`/`::after` son el "screen tear": se desplazan lateralmente y
+     vuelven, una sola vez. */
+  .fx-ambient {
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    pointer-events: none;
+    opacity: 0;
+    mix-blend-mode: overlay;
+    background-image: repeating-conic-gradient(theme('colors.pixel.mist') 0% 25%, transparent 0% 50%);
+    background-size: 3px 3px;
+  }
+
+  .fx-ambient.is-active {
+    animation: fx-ambient-burst 240ms steps(4, jump-end) 1 both;
+  }
+
+  .fx-ambient.is-active::before,
+  .fx-ambient.is-active::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 3px;
+    opacity: 0.5;
+    background: theme('colors.pixel.glow');
+  }
+
+  .fx-ambient.is-active::before {
+    top: 27%;
+    animation: fx-tear-shift 240ms steps(3, jump-end) 1 both;
+  }
+
+  .fx-ambient.is-active::after {
+    top: 64%;
+    animation: fx-tear-shift-reverse 240ms steps(3, jump-end) 1 both;
+  }
+
+  @keyframes fx-ambient-burst {
+    0% {
+      opacity: 0;
+      background-size: 3px 3px;
+      filter: none;
+    }
+    25% {
+      opacity: 0.1;
+      background-size: 14px 14px;
+      filter: drop-shadow(2px 0 0 theme('colors.pixel.glow'))
+        drop-shadow(-2px 0 0 theme('colors.pixel.slate'));
+    }
+    55% {
+      opacity: 0.06;
+      background-size: 3px 3px;
+      filter: none;
+    }
+    80% {
+      opacity: 0.12;
+      background-size: 9px 9px;
+    }
+    100% {
+      opacity: 0;
+      background-size: 3px 3px;
+      filter: none;
+    }
+  }
+
+  @keyframes fx-tear-shift {
+    0% {
+      transform: translateX(0);
+    }
+    50% {
+      transform: translateX(18px);
+    }
+    100% {
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes fx-tear-shift-reverse {
+    0% {
+      transform: translateX(0);
+    }
+    50% {
+      transform: translateX(-14px);
+    }
+    100% {
+      transform: translateX(0);
+    }
+  }
+
+  /* --- Ráfaga intensa, UN SOLO ciclo: veredicto `malicious`. Se aplica al
+     montar el panel/la mascota con ese resultado (React remonta el nodo por
+     `key`, así que el ciclo vuelve a correr en cada scan malicioso nuevo, no
+     sólo el primero). RGB split más marcado que el ambiental + jitter
+     horizontal — nunca parpadeo de opacidad brusco, así queda muy lejos del
+     umbral de WCAG 2.3.1 aunque sea "el más intenso" del set. */
+  .fx-burst-malicious {
+    animation: fx-burst-malicious 560ms steps(4, jump-end) 1 both;
+  }
+
+  @keyframes fx-burst-malicious {
+    0% {
+      filter: none;
+      transform: translateX(0);
+    }
+    15% {
+      filter: drop-shadow(3px 0 0 theme('colors.pixel.malicious')) drop-shadow(-3px 0 0 theme('colors.pixel.glow'));
+      transform: translateX(-3px);
+    }
+    35% {
+      filter: drop-shadow(-4px 0 0 theme('colors.pixel.malicious')) drop-shadow(3px 0 0 theme('colors.pixel.ink2'));
+      transform: translateX(3px);
+    }
+    55% {
+      filter: drop-shadow(2px 0 0 theme('colors.pixel.malicious'));
+      transform: translateX(-2px);
+    }
+    80% {
+      filter: drop-shadow(1px 0 0 theme('colors.pixel.malicious'));
+      transform: translateX(1px);
+    }
+    100% {
+      filter: none;
+      transform: translateX(0);
+    }
+  }
+
+  /* Ruido/estática superpuesto SOLO durante el burst `malicious` (nunca en
+     `unknown`, que se queda más "silencioso" — ver frontend-design.md §8).
+     Vive como pseudo-elemento del propio Card, sin marcado extra. */
+  .fx-noise-burst {
+    position: relative;
+  }
+
+  .fx-noise-burst::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: repeating-conic-gradient(theme('colors.pixel.fog') 0% 25%, transparent 0% 50%);
+    background-size: 3px 3px;
+    opacity: 0;
+    animation: fx-noise-flicker 560ms steps(5, jump-end) 1 both;
+  }
+
+  @keyframes fx-noise-flicker {
+    0%,
+    100% {
+      opacity: 0;
+      background-position: 0 0;
+    }
+    20% {
+      opacity: 0.18;
+      background-position: 1px 2px;
+    }
+    40% {
+      opacity: 0.1;
+      background-position: -2px 0;
+    }
+    60% {
+      opacity: 0.2;
+      background-position: 2px -1px;
+    }
+    80% {
+      opacity: 0.08;
+      background-position: 0 1px;
+    }
+  }
+
+  /* --- Ráfaga más suave, UN SOLO ciclo: veredicto `unknown`. Deliberadamente
+     sin ruido y con menos desplazamiento que `malicious` — "no se pudo
+     evaluar" no es lo mismo que "amenaza confirmada", el glitch tiene que
+     leerse distinto, no sólo más flojo. Violeta (`pixel-unknown`), igual que
+     el resto de la identidad de `confused`. */
+  .fx-burst-unknown {
+    animation: fx-burst-unknown 480ms steps(3, jump-end) 1 both;
+  }
+
+  @keyframes fx-burst-unknown {
+    0% {
+      filter: none;
+      transform: translateX(0) skewX(0deg);
+    }
+    30% {
+      filter: drop-shadow(2px 0 0 theme('colors.pixel.unknown')) drop-shadow(-2px 0 0 theme('colors.pixel.glow'));
+      transform: translateX(2px) skewX(1deg);
+    }
+    65% {
+      filter: drop-shadow(-2px 0 0 theme('colors.pixel.unknown'));
+      transform: translateX(-2px) skewX(-1deg);
+    }
+    100% {
+      filter: none;
+      transform: translateX(0) skewX(0deg);
+    }
+  }
+
+  /* --- Jitter continuo y errático: mascota en `confused`. Nada de opacidad
+     — sólo micro-desplazamientos de 1px en momentos irregulares del ciclo
+     (no una sinusoide suave), para que se sienta "entrecortado" en vez de
+     "respirando". Periodo de 2.4s: muy por debajo de cualquier banda de
+     parpadeo. */
+  .fx-jitter-confused {
+    animation: fx-jitter-confused 2.4s steps(1, jump-end) infinite;
+  }
+
+  @keyframes fx-jitter-confused {
+    0%,
+    78%,
+    100% {
+      transform: translate(0, 0);
+    }
+    80% {
+      transform: translate(1px, -1px);
+    }
+    83% {
+      transform: translate(-1px, 0);
+    }
+    86% {
+      transform: translate(0, 1px);
+    }
+    90% {
+      transform: translate(-1px, -1px);
+    }
+    93% {
+      transform: translate(0, 0);
+    }
+  }
+
+  /* --- Jitter continuo y sutil: mascota en `scanning`, como si el sistema
+     estuviera "procesando bajo carga". Un guiño de RGB split muy breve dentro
+     de cada ciclo de 1.4s, no un parpadeo — el resto del ciclo está quieto. */
+  .fx-jitter-scanning {
+    animation: fx-jitter-scanning 1.4s steps(1, jump-end) infinite;
+  }
+
+  @keyframes fx-jitter-scanning {
+    0%,
+    60%,
+    100% {
+      filter: none;
+    }
+    64% {
+      filter: drop-shadow(1px 0 0 theme('colors.pixel.glow'));
+    }
+    68% {
+      filter: none;
+    }
+  }
+
+  /* --- Fondo ambiental (araña + telarañas, `ThreatBackdrop.tsx`): dos
+     glitches CONTINUOS nuevos — antes sólo glitcheaba en el burst de un
+     cambio de veredicto, ahora "vive" todo el tiempo. Ver
+     docs/architecture/frontend-design.md §11.
+
+     (a) `.fx-backdrop-glow` — difuminado de borde teñido por el nivel activo:
+     `filter: drop-shadow(...)` en `currentColor`, así hereda EXACTAMENTE el
+     mismo color que ya fija `threatTintClassFor` (verde si `clean`, ámbar/rojo
+     si `suspicious`/`malicious`, violeta si `unknown`, neutro si no hay scan)
+     sin ningún color nuevo. Sólo anima `filter` (radio del blur), período
+     2.6s ease-in-out — muy por debajo de cualquier banda de parpadeo.
+
+     (b) `.fx-backdrop-hack` — parpadeo de píxeles "pantalla hackeada":
+     mismo vocabulario de ruido que `.fx-grain`/`.fx-noise-burst`
+     (`repeating-conic-gradient` + salto de `background-position`), pero
+     CONTINUO en vez de atado a un evento, y coloreado con `currentColor` (el
+     mismo tinte de amenaza) en vez del gris neutro de `.fx-grain`. Período
+     2.2s, `steps(1, jump-end)` para que se sienta digital/entrecortado en vez
+     de una ola suave, con varias paradas dentro del ciclo (mismo patrón que
+     `.fx-jitter-confused`) — sigue siendo UN cambio cada tantos cientos de ms
+     dentro de un período de 2.2s, no una oscilación en la banda 3-60Hz. */
+  .fx-backdrop-glow {
+    animation: fx-backdrop-glow-breathe 2.6s ease-in-out infinite;
+  }
+
+  @keyframes fx-backdrop-glow-breathe {
+    0%,
+    100% {
+      filter: drop-shadow(0 0 3px currentColor) drop-shadow(0 0 7px currentColor);
+    }
+    50% {
+      filter: drop-shadow(0 0 6px currentColor) drop-shadow(0 0 11px currentColor);
+    }
+  }
+
+  .fx-backdrop-hack {
+    background-image: repeating-conic-gradient(currentColor 0% 25%, transparent 0% 50%);
+    background-size: 4px 4px;
+    opacity: 0;
+    animation: fx-backdrop-hack-flicker 2.2s steps(1, jump-end) infinite;
+  }
+
+  @keyframes fx-backdrop-hack-flicker {
+    0%,
+    46%,
+    58%,
+    100% {
+      opacity: 0;
+      background-position: 0 0;
+    }
+    50% {
+      opacity: 0.14;
+      background-position: 2px 1px;
+    }
+    54% {
+      opacity: 0.08;
+      background-position: -1px 2px;
+    }
+    76% {
+      opacity: 0.16;
+      background-position: 1px -1px;
+    }
+    80% {
+      opacity: 0;
+      background-position: 0 0;
+    }
+  }
+
+  /* ============================================================
+     Capa "cámara vieja de vigilancia" — corre TODO EL TIEMPO, no sólo en un
+     veredicto. Ver docs/architecture/frontend-design.md "Dirección visual:
+     cámara vieja". Misma disciplina de amplitud/duración que arriba: nada de
+     parpadeo de luz-oscuridad, todo `transform`/`filter`/`opacity`/
+     `background-position` de amplitud mínima o de un solo ciclo corto.
+     ============================================================ */
+
+  /* Viñeta estática (chrome de visor de cámara) — sin animación, no hay nada
+     que degradar con reduced-motion. */
+  .fx-vignette {
+    z-index: 1;
+    opacity: 0.7;
+    background: radial-gradient(ellipse at center, transparent 55%, theme('colors.pixel.bg') 135%);
+  }
+
+  /* Grano de película: SÓLO la posición del patrón se anima (nunca su
+     opacidad) — así no hay ningún cambio de luminancia total del cuadro,
+     sólo un "arrastre" de textura. Es lo más seguro posible frente a
+     WCAG 2.3.1 y a la vez lo que más vende la sensación de VHS/CCTV viejo. */
+  .fx-grain {
+    z-index: 2;
+    opacity: 0.05;
+    mix-blend-mode: overlay;
+    background-image: repeating-conic-gradient(theme('colors.pixel.mist') 0% 25%, transparent 0% 50%);
+    background-size: 3px 3px;
+    animation: fx-grain-crawl 1s steps(6, jump-end) infinite;
+  }
+
+  @keyframes fx-grain-crawl {
+    0% {
+      background-position: 0 0;
+    }
+    100% {
+      background-position: 11px 7px;
+    }
+  }
+
+  /* Rolling scanline: una franja translúcida que recorre la pantalla de
+     arriba a abajo en loop lento (7s ⇒ muy por debajo de 3-60Hz) — el
+     clásico "roll" de una cinta VHS/CCTV vieja. Opacidad FIJA (0.10), sólo
+     se anima `transform`. */
+  .fx-scan-roll {
+    z-index: 3;
+    height: 160px;
+    opacity: 0.1;
+    background: linear-gradient(to bottom, transparent 0%, theme('colors.pixel.glow') 50%, transparent 100%);
+    animation: fx-scan-roll-move 7s linear infinite;
+  }
+
+  @keyframes fx-scan-roll-move {
+    0% {
+      transform: translateY(-160px);
+    }
+    100% {
+      transform: translateY(100vh);
+    }
+  }
+
+  /* Indicador REC: pulso LENTO (1.6s, ~0.625Hz) entre opacidad 1 y 0.55 —
+     "parpadeante pero no estroboscópico", nunca llega a apagarse del todo. */
+  .fx-rec-pulse {
+    animation: fx-rec-pulse 1.6s ease-in-out infinite;
+  }
+
+  @keyframes fx-rec-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.55;
+    }
+  }
+
+  /* Puntos de "escribiendo…" del indicador de tipeo — patrón de chat
+     estándar, amplitud de opacidad moderada pero periodo lento (1.2s) y sólo
+     tres elementos pequeños, no un área grande de pantalla. */
+  .fx-typing-dot {
+    animation: fx-typing-dot 1.2s ease-in-out infinite;
+  }
+
+  @keyframes fx-typing-dot {
+    0%,
+    80%,
+    100% {
+      opacity: 0.3;
+      transform: translateY(0);
+    }
+    40% {
+      opacity: 1;
+      transform: translateY(-2px);
+    }
+  }
+
+  /* Ráfaga neutra de UN SOLO ciclo: dispara en CADA mensaje nuevo del
+     personaje (ver `MascotMessage`), no sólo en veredictos — el pedido
+     explícito de subir la FRECUENCIA de disparo sin subir intensidad ni
+     duración por disparo. 320ms, 1px de desplazamiento máximo, sin ruido. */
+  .fx-burst-message {
+    animation: fx-burst-message 320ms steps(3, jump-end) 1 both;
+  }
+
+  @keyframes fx-burst-message {
+    0% {
+      filter: none;
+      transform: translateX(0);
+    }
+    35% {
+      filter: drop-shadow(1px 0 0 theme('colors.pixel.glow')) drop-shadow(-1px 0 0 theme('colors.pixel.slate'));
+      transform: translateX(-1px);
+    }
+    70% {
+      filter: drop-shadow(-1px 0 0 theme('colors.pixel.mist'));
+      transform: translateX(1px);
+    }
+    100% {
+      filter: none;
+      transform: translateX(0);
+    }
+  }
+
+  /* "Feed" de la cámara (contenido real: sidebar + chat, ver App.tsx) con
+     cortes de milisegundos / caída de frames CONSTANTE — la pieza central
+     del pedido de "sensación de terror todo el tiempo, no sólo en alertas".
+     Deliberadamente separado del chrome fijo (REC/timestamp/HUD no
+     tiemblan, como en una cámara real: el "sensor" judea, la superposición
+     de texto no). 1px de desplazamiento, un dip de opacidad de sólo ~6%,
+     ciclo de 3.6s (0.28Hz) — muy por debajo de cualquier banda de parpadeo. */
+  .fx-feed-jitter {
+    animation: fx-feed-jitter 3.6s steps(1, jump-end) infinite;
+  }
+
+  @keyframes fx-feed-jitter {
+    0%,
+    72%,
+    100% {
+      transform: translate(0, 0);
+      opacity: 1;
+    }
+    74% {
+      transform: translate(1px, 0);
+    }
+    76% {
+      transform: translate(-1px, 1px);
+      opacity: 0.94;
+    }
+    78% {
+      transform: translate(0, -1px);
+    }
+    80% {
+      transform: translate(0, 0);
+      opacity: 1;
+    }
+  }
+
+  /* --- Accesibilidad fotosensible y `prefers-reduced-motion`: no negociable.
+     Apaga toda animación automática de esta capa; las scanlines se quedan
+     como una textura ESTÁTICA (sin `animation`) en vez de desaparecer del
+     todo, para no perder la identidad retro de base. */
+  @media (prefers-reduced-motion: reduce) {
+    .fx-scanlines,
+    .fx-ambient,
+    .fx-ambient.is-active,
+    .fx-ambient.is-active::before,
+    .fx-ambient.is-active::after,
+    .fx-burst-malicious,
+    .fx-noise-burst::after,
+    .fx-burst-unknown,
+    .fx-jitter-confused,
+    .fx-jitter-scanning,
+    .fx-grain,
+    .fx-scan-roll,
+    .fx-rec-pulse,
+    .fx-typing-dot,
+    .fx-burst-message,
+    .fx-feed-jitter,
+    .fx-backdrop-glow,
+    .fx-backdrop-hack {
+      animation: none !important;
+    }
+
+    .fx-scanlines {
+      opacity: 0.16;
+    }
+
+    .fx-ambient {
+      display: none;
+    }
+
+    /* Capa CCTV continua (ver "Dirección visual: cámara vieja"): el grano se
+       queda como textura ESTÁTICA de baja opacidad (mismo criterio que
+       scanlines), el roll de scanline desaparece (no tiene versión estática
+       con sentido), el REC se queda sólido en vez de pulsar, los puntos de
+       tipeo se congelan visibles pero quietos, y el "feed" deja de temblar
+       — el chrome (HUD/timestamp) ya era estático de por sí. */
+    .fx-grain {
+      opacity: 0.05;
+      background-position: 0 0;
+    }
+
+    .fx-scan-roll {
+      display: none;
+    }
+
+    .fx-rec-pulse {
+      opacity: 1;
+    }
+
+    .fx-typing-dot {
+      opacity: 0.7;
+      transform: none;
+    }
+
+    .fx-feed-jitter {
+      transform: none;
+      opacity: 1;
+    }
+
+    /* Fondo ambiental (§11): el difuminado de borde se queda como un glow
+       estático de radio fijo (mismo criterio que `.fx-grain`/`.fx-scanlines`
+       arriba: textura fija en vez de desaparecer del todo) y el parpadeo de
+       píxeles "hackeado" se apaga por completo — es puro ruido intermitente,
+       sin él no se pierde ninguna información ni identidad visual de base. */
+    .fx-backdrop-glow {
+      filter: drop-shadow(0 0 5px currentColor);
+    }
+
+    .fx-backdrop-hack {
+      opacity: 0;
+    }
+  }
+}

@@ -11,12 +11,17 @@ import { createUrlhausSource } from './urlhaus.js';
 
 /**
  * @param {import('../../config/index.js').config} config
+ * @param {object} [deps]
+ * @param {ReturnType<typeof import('../quota/quotaTracker.js').createQuotaTracker>} [deps.quotaTracker]
+ *   Cada fuente solo lo usa en su rama real (`useMock === false`); en modo
+ *   mock queda sin efecto.
  * @returns {{id: string, supports: Function, lookup: Function}[]}
  */
-export function createSources(config) {
+export function createSources(config, { quotaTracker } = {}) {
   const shared = {
     useMock: config.useMockSources,
     timeoutMs: config.sourceTimeoutMs,
+    quotaTracker,
   };
 
   return [

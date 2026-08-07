@@ -25,6 +25,14 @@ beforeAll(async () => {
       res.writeHead(429).end('slow down');
     } else if (req.url === '/boom') {
       res.writeHead(500).end('kaboom internal detail');
+    } else if (req.url === '/with-headers') {
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'x-ratelimit-limit': '1000',
+        'x-ratelimit-remaining': '997',
+        'x-ratelimit-reset': '1754611200',
+      });
+      res.end(JSON.stringify({ ok: true }));
     } else if (req.url === '/echo') {
       let body = '';
       req.on('data', (chunk) => {
@@ -110,6 +118,28 @@ describe('fetchJson', () => {
     await expect(
       fetchJson(`${baseUrl}/missing`, { source: 'test' }),
     ).rejects.toMatchObject({ httpStatus: 404 });
+  });
+
+  it('invokes onHeaders with the response Headers before returning the body', async () => {
+    let seen;
+    await fetchJson(`${baseUrl}/with-headers`, {
+      source: 'test',
+      onHeaders: (headers) => {
+        seen = headers;
+      },
+    });
+    expect(seen.get('x-ratelimit-remaining')).toBe('997');
+  });
+
+  it('calls onHeaders even when the response is a 429, before throwing', async () => {
+    let called = false;
+    await fetchJson(`${baseUrl}/rate-limited`, {
+      source: 'test',
+      onHeaders: () => {
+        called = true;
+      },
+    }).catch(() => {});
+    expect(called).toBe(true);
   });
 
   it('sends a form-encoded body when asked to POST, as URLhaus requires', async () => {

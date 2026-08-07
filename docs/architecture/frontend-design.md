@@ -1,0 +1,606 @@
+# Dirección visual — IOC Scanner (frontend)
+
+> Fijada antes de escribir componentes, como exige `.claude/agents/frontend-builder.md`.
+> Referencia: `imagen/personajeSpider.jpg` — silueta pixel art de paleta muy oscura
+> (negros, grises azulados), sombrero, gafas blancas brillantes, objeto claro en la mano.
+
+## 1. Paleta — 13 tokens, todos en `tailwind.config.js` bajo `colors.pixel`
+
+Ningún componente usa un color suelto (`bg-[#...]`). Todo pasa por un token.
+
+| Token | Hex | Uso |
+|---|---|---|
+| `pixel-bg` | `#0a0a0f` | Fondo de página. Negro casi puro, como el sombrero de la mascota. |
+| `pixel-bg2` | `#12121a` | Fondo de tarjetas/paneles — un escalón más claro que la página. |
+| `pixel-ink` | `#1c1f2b` | Superficie de componentes (inputs, filas de historial). |
+| `pixel-ink2` | `#2a2e3f` | Bordes duros de componentes, divisores. |
+| `pixel-slate` | `#3d4256` | Bordes activos/hover, estructura secundaria. |
+| `pixel-fog` | `#6b7280` | Texto secundario, placeholders, metadatos (timestamps). |
+| `pixel-mist` | `#a8b0c3` | Texto de cuerpo por defecto — gris azulado, nunca blanco puro. |
+| `pixel-glass` | `#f4f6fb` | Texto de énfasis, títulos, y el color de las gafas de la mascota. Es el único casi-blanco de la paleta — reservado para lo que debe "brillar", igual que en la referencia. |
+| `pixel-glow` | `#dce8ff` | Halo/glow sutil alrededor de la mascota y focus rings. |
+| `pixel-clean` | `#3ddc84` | Verdict `clean`. Verde — el único nivel que se pinta en verde. |
+| `pixel-suspicious` | `#f5c542` | Verdict `suspicious`. Ámbar. |
+| `pixel-malicious` | `#e5484d` | Verdict `malicious`. Rojo. |
+| `pixel-unknown` | `#9b8cff` | Verdict `unknown`. Violeta — deliberadamente fuera de la familia
+semáforo verde/ámbar/rojo, para que sea imposible confundirlo con "limpio" de un
+vistazo. Es también el color del estado `confused` de la mascota. |
+
+**Regla de la trampa (`unknown`):** `pixel-unknown` no es un tono de `pixel-clean` ni
+aparece nunca en un `else` que agrupe "todo lo que no es rojo/ámbar". Tiene su propia
+rama explícita en cada componente que pinta por nivel (badge de veredicto, barra de
+riesgo, mascota, fila de historial).
+
+## 2. Tipografía
+
+Ambas de Google Fonts, cargadas globalmente vía `@fontsource` (self-hosted en el bundle,
+no un `<link>` a Google Fonts en runtime — evita una dependencia de red externa y una
+fuga de IP del visitante a un tercero):
+
+- **`Press Start 2P`** (`font-pixel`) — headers, botones, badges, etiquetas cortas.
+  Es la fuente "logo" del proyecto: cada glifo es literalmente un sprite de 8×8, encaja
+  con la estética de la mascota. Ilegible en párrafos largos, así que se restringe a
+  texto corto (≤ ~40 caracteres).
+- **`VT323`** (`font-mono-pixel`) — cuerpo de texto, `summary` del veredicto, detalles
+  por fuente, historial. Sigue siendo una fuente pixel/terminal retro, pero legible en
+  frases largas. Es la que sostiene "toda la UI usa tipografía pixel", no sólo la mascota.
+
+Ambas se declaran en `tailwind.config.js` como `fontFamily.pixel` / `fontFamily.mono-pixel`
+y se aplican vía `@layer base` en `index.css`, así ningún componente decide su propia
+fuente.
+
+## 3. Bordes, sombras, esquinas
+
+- `border-radius: 0` en todo — sin excepciones. Un pixel art con esquinas redondeadas
+  se ve roto.
+- Bordes duros de 2–4px (`border-2`/`border-4`), nunca `box-shadow` difuminado. Donde se
+  necesita profundidad se usa un "pixel shadow" — un segundo bloque sólido desplazado
+  (`box-shadow: 4px 4px 0 0 var(--pixel-ink2)`), no un blur.
+- Focus ring visible y anguloso: `outline: 2px solid pixel-glow`, `outline-offset: 2px`
+  — accesibilidad primero, sin sacrificar el estilo (ver §6).
+
+## 4. La mascota — 4 estados, no 3
+
+El ADR 3 (revisado) de `docs/architecture/domain-model.md` añadió `unknown` como cuarto
+nivel de veredicto, fuera de la escala semáforo. La mascota tiene que reflejar eso con un
+cuarto estado propio, no reutilizar ninguno de los otros tres:
+
+| Estado mascota | Verdict | Color dominante | Idea visual |
+|---|---|---|---|
+| `idle` | — (sin consulta aún) | `pixel-mist` | Postura neutra, ligera respiración (loop de 2 frames). |
+| `scanning` | consulta en vuelo | `pixel-glow` | Gafas parpadean rápido, postura inclinada hacia adelante. |
+| `calm` | `clean` | `pixel-clean` | Postura relajada, brazo bajo. |
+| `alert` | `suspicious` \| `malicious` | `pixel-suspicious` / `pixel-malicious` | Postura tensa, objeto en alto. La intensidad (ámbar vs rojo) distingue sospechoso de malicioso, pero la pose es la misma "alerta". |
+| `confused` | `unknown` | `pixel-unknown` | Gafas con un signo de interrogación/parpadeo irregular, postura encogida de hombros — visualmente **la más distinta** de las cuatro, para que no se pueda confundir con `calm` de un vistazo rápido. |
+
+Sprite sheet real (dibujado a mano, pixel a pixel, en la paleta de arriba — ver §5) en
+`public/sprites/mascot.png`, 5 frames por fila × 2 frames de animación por estado
+(10 frames, grid 5×2 de 32×32px cada uno). Animado con `@keyframes` + `steps()` sobre
+`background-position`, cero dependencias. `image-rendering: pixelated` en el elemento
+que lo pinta.
+
+## 5. Sprite — decisión de origen del arte
+
+No existe aún un sprite sheet oficial de 4 estados. En vez de bloquear el resto del
+frontend esperando arte final, se genera un sprite propio con Node/`canvas`-less (buffer
+PNG manual, sin dependencias) inspirado directamente en la silueta de
+`imagen/personajeSpider.jpg`: sombrero de ala ancha, gafas rectangulares blancas
+brillantes, silueta de un solo tono oscuro con el objeto en la mano cambiando de color
+según el estado. Es **arte placeholder de producción** — coherente con la paleta y
+reemplazable 1:1 más adelante sin tocar el componente `Mascot`, que sólo conoce el grid
+de frames y el nombre del estado.
+
+## 6. Accesibilidad — no negociable aunque el estilo sea "difícil"
+
+- Contraste: todo texto de cuerpo (`pixel-mist` sobre `pixel-bg`/`pixel-bg2`) se validó
+  ≥ 4.5:1. Los 4 colores de veredicto se usan siempre acompañados de **texto** (`CLEAN`,
+  `SUSPICIOUS`, `MALICIOUS`, `UNKNOWN`) e ícono/forma, nunca solo color — un usuario con
+  daltonismo no puede distinguir `pixel-suspicious` de `pixel-malicious` por matiz solo.
+- La mascota es decorativa respecto del veredicto: el estado siempre se anuncia también
+  en texto (`aria-live="polite"` en el panel de veredicto) — la animación no es el único
+  canal de la información.
+- Formulario: `<label>` asociado a cada input, mensajes de error de validación en texto,
+  no solo color de borde.
+
+## 7. Stack y por qué
+
+- **TypeScript**, no JS plano. El contrato del backend tiene exactamente el tipo de forma
+  que TypeScript existe para atrapar: una unión discriminada de 4 niveles y un
+  `score: number | null` cuyo `null` es fácil de "perder" con `??`. Modelar
+  `Verdict`/`SourceReport` como tipos de unión hace que `score ?? 0` o un `switch` sin
+  rama `unknown` fallen en build, no en producción — exactamente la clase de bug que
+  motivó el ADR 3. El backend es JS por convención propia (Node sin build step); el
+  frontend sí tiene paso de build (Vite), así que el costo de adoptar TS es marginal.
+- **Vite + React 18 + Tailwind 3** (config JS clásica, no el modo CSS-first de Tailwind 4)
+  porque la tarea pide explícitamente tokens en `tailwind.config.js`.
+- **`framer-motion`** limitado a transiciones de UI (aparición/desaparición del panel de
+  resultado, cambios de historial) — nunca para el ciclo del sprite, que es CSS puro
+  (`steps()`), como exige la regla dura del agente.
+
+## 8. Capa de efectos "glitch"
+
+Feedback directo tras probar la app: el diseño pixel art/retro se sentía "estático" para
+un producto que literalmente escanea señales comprometidas. Se pidió explícitamente
+sensación de "pantalla hackeada" — cortes, pixelación, interferencia — sin convertir la
+UI en un espectáculo que tape el veredicto ni en un riesgo de accesibilidad fotosensible.
+
+### 8.0 Corrección previa: el sprite no se parecía a la referencia
+
+Antes de tocar el glitch, se re-revisó `imagen/personajeSpider.jpg` pixel a pixel contra
+`public/sprites/mascot.png` y el parecido era insuficiente: la silueta anterior (un blob
+con una gorra genérica) no tenía ni el ala ancha del sombrero, ni la franja de gafas
+rectangular, ni el brazo extendido con el objeto claro que son las tres señas de identidad
+más reconocibles de la referencia. Se rediseñó la grilla ASCII de
+`scripts/generate-mascot-sprite.mjs` (y su espejo en `scripts/generate-favicon.mjs`) para
+capturar esas tres señas dentro del mismo presupuesto de 16×16px sin dependencias:
+copa cónica + ala de sombrero de una sola barra ancha (fila 5, más ancha que la cabeza y
+que los hombros), franja de gafas de una sola pieza (en vez de dos "ojos" separados,
+igual que la referencia) y un brazo que sale del torso hacia el borde derecho del frame
+terminando en el objeto claro (`O`), en vez de un objeto flotando simétrico bajo el
+cuerpo. La pose de piernas se mantiene esquemática (16px da para muy poco detalle de
+piernas), pero la lectura "sombrero de ala ancha + gafas + brazo con arma" — que es lo que
+hace reconocible a la referencia en una miniatura — ahora sí está presente. El script se
+corrió (`node scripts/generate-mascot-sprite.mjs && node scripts/generate-favicon.mjs`) y
+el resultado se inspeccionó ampliado 10× antes de continuar.
+
+### 8.1 Qué efectos, dónde, y por qué (no los diez a la vez)
+
+Del repertorio completo (screen tear, RGB split, pixelación momentánea, static/noise,
+scanline flicker) se usan los cinco, pero repartidos con un criterio: **la intensidad y
+el color del glitch anticipan y refuerzan el significado del momento**, nunca decoran sin
+motivo.
+
+| Disparador | Efectos | Color/tono | Duración | Por qué |
+|---|---|---|---|---|
+| **Ambiental** (toda la página, `GlitchOverlay` + `useAmbientGlitch`) | RGB split leve (`drop-shadow` sin blur), screen tear (dos barras que se desplazan y vuelven), pixelación momentánea (`background-size` salta de 3px a 9–14px y vuelve), ruido fino (`repeating-conic-gradient`) | Neutro: `pixel-mist`/`pixel-glow`/`pixel-slate` — nunca rojo ni violeta, para no insinuar un veredicto falso cuando no hay ninguno en pantalla | ~240ms, cada 9–16s (aleatorio) | "El sistema que vigila amenazas también es observable vigilando" — inestabilidad ambiental de fondo, no ligada a ningún resultado. |
+| **Scanlines base** (`fx-scanlines`, siempre montado) | Textura de líneas horizontales con una respiración de opacidad muy lenta (5s) | — | Continuo, amplitud mínima (0.16↔0.26) | El clásico "aire" CRT del pixel art, intensificado apenas como base permanente en vez de un one-off — es el único efecto que no necesita disparo. |
+| **`scanning`** (mascota, `fx-jitter-scanning`) | Un guiño de RGB split muy breve dentro de cada ciclo de 1.4s | `pixel-glow` | Continuo mientras dura la consulta, amplitud mínima | "Procesando bajo carga" — sutil a propósito, la mascota ya se mueve más rápido en su propio ciclo de sprite; el glitch sólo acompaña. |
+| **`malicious`** (mascota + `VerdictPanel`, `fx-burst-malicious` + `fx-noise-burst`) | RGB split marcado + jitter horizontal + ráfaga de estática — el combo más "ruidoso" del set | `pixel-malicious` (rojo) | Un solo ciclo de 560ms, disparado al revelarse el resultado | Es el peor veredicto posible; el glitch más fuerte se reserva para él y sólo para él (`suspicious` no lo dispara) — refuerza "algo anda mal" exactamente en el instante en que se sabe. |
+| **`unknown`/`confused`** (mascota + `VerdictPanel`, `fx-burst-unknown` al revelarse + `fx-jitter-confused` continuo mientras se muestra) | RGB split + un leve `skew`, sin ruido/estática; jitter continuo errático (saltos de 1px en momentos irregulares del ciclo, no una sinusoide) | `pixel-unknown` (violeta) | Ráfaga: 480ms un ciclo. Jitter continuo: periodo de 2.4s, amplitud 1px | "No se pudo evaluar" no es lo mismo que "amenaza confirmada" — deliberadamente más silencioso que `malicious` (sin ruido) pero más **errático** que cualquier otro estado (es el único con jitter continuo), coherente con la mascota `confused` que ya es la más distinta de las cuatro. |
+
+`clean` y `suspicious` no disparan ningún glitch de veredicto — sólo cuentan con el halo de
+color que ya existía. Reservar el glitch fuerte para `malicious` (y una variante más suave
+y distinta para `unknown`) es la decisión de diseño central de esta capa: si todo
+glitchea, nada comunica.
+
+### 8.2 Cómo se degradan con `prefers-reduced-motion: reduce`
+
+Bloque único al final de `styles/index.css` (`@media (prefers-reduced-motion: reduce)`)
+que pone `animation: none !important` en las nueve clases de esta capa. Las scanlines no
+desaparecen del todo (se quedan como textura estática en `opacity: 0.16`, sin
+`animation`) para no perder la identidad retro de base; el overlay ambiental si se oculta
+por completo (`display: none`), porque no tiene ninguna función informativa. Además,
+`useAmbientGlitch` comprueba `matchMedia('(prefers-reduced-motion: reduce)')` **antes** de
+programar el primer `setTimeout` — con reduced motion activo, el temporizador de ráfagas
+ambientales ni siquiera se arma (no es sólo que la animación quede en `none`, es que la
+capa de orquestación tampoco intenta disparar nada), y se re-evalúa en vivo si el usuario
+cambia la preferencia del SO sin recargar la pestaña.
+
+### 8.3 Por qué es seguro para fotosensibilidad (WCAG 2.3.1)
+
+- Ningún efecto alterna opacidad/brillo de forma repetida y sostenida: los "one-shot"
+  (`malicious`, `unknown`, ambiental) son un solo ciclo de `steps()` de ≤560ms —
+  transiciones de posición/filtro, no parpadeos de luz-oscuridad — y no se repiten hasta
+  el próximo evento (siguiente scan, o el próximo intervalo aleatorio de 9-16s del
+  ambiental).
+- Los efectos continuos (`fx-jitter-confused`, `fx-jitter-scanning`, la respiración de
+  scanlines) tienen periodos de 1.4s–5s: muy por debajo de la banda de parpadeo
+  peligrosa (3–60Hz) — son casi imperceptiblemente lentos comparados con un strobe.
+- Ninguno cubre un área grande de la pantalla con alto contraste sostenido: el overlay
+  ambiental usa opacidades de 0.06–0.12 con `mix-blend-mode: overlay`, muy por debajo del
+  umbral de "flash" de la norma incluso si se ignorara todo lo anterior.
+
+### 8.4 Legibilidad y performance
+
+- El glitch del veredicto vive en el `<Card>`, nunca en el `motion.div` de `framer-motion`
+  que lo envuelve (ese ya anima `opacity`/`transform` inline por frame; una animación CSS
+  con las mismas propiedades en el mismo nodo se pelearía con eso). Esto también evita
+  que el glitch retrase la aparición del texto del veredicto — el `<Card>` remonta y el
+  texto está legible antes de que termine el ciclo de 560ms.
+- Todas las animaciones usan `transform`/`filter`/`opacity`/`background-position`/
+  `background-size` — nunca `width`/`height`/`top`/`left` — así que sólo disparan
+  paint/composite, no layout. Verificado sin jank visible en Chromium (DevTools
+  Performance) durante la ráfaga `malicious` y el jitter continuo de `confused`.
+- La mascota necesita **tres** nodos anidados (halo → burst → sprite) precisamente para
+  que el jitter continuo del halo y la ráfaga puntual del burst no compitan por la misma
+  propiedad `animation` en el mismo elemento — dos clases con `animation` en un solo nodo
+  no se combinan, la última en cascada gana y la otra se pierde.
+
+---
+
+## 9. Rediseño — chat full-bleed + "cámara vieja de vigilancia" (REEMPLAZA el layout de paneles de §1-8)
+
+Feedback textual del usuario tras probar la primera versión: *"es como que estuviera 2
+cuadros en la mitad y a los lados nada"*. El layout centrado de §1-8 (columna angosta,
+`max-w-3xl`, formulario + panel de resultado apilados) se **descarta por completo**, no se
+ajusta. Lo que sigue es la dirección nueva. La paleta de 13 tokens (§1), la tipografía (§2),
+los bordes duros (§3), los 4 estados de la mascota (§4) y la disciplina de accesibilidad
+(§6) **siguen vigentes tal cual** — lo que cambia es la estructura (paneles → chat) y que la
+capa de glitch (§8) pasa de "ligada a eventos" a "corriendo todo el tiempo".
+
+### 9.1 Por qué un chat, no un formulario + panel
+
+Un formulario que se vacía tras cada consulta y un panel de resultado que reemplaza al
+anterior no dejan rastro de la conversación — cada scan nuevo borra el contexto del
+anterior salvo por el historial aparte. Un chat resuelve el vacío lateral del feedback
+**y** el problema de contexto a la vez: la columna central deja de ser un formulario
+flotando en el medio de la pantalla para ser una conversación que crece hacia abajo y
+ocupa todo el alto disponible, con el personaje "hablando" cada resultado en vez de
+mostrarlo en un panel estático. El historial se saca del flujo de mensajes a propósito
+(§9.3) — mezclar "conversación en curso" con "bitácora completa" en la misma lista haría
+ambas cosas peor.
+
+### 9.2 Sprite — de grilla ASCII a downsampling algorítmico de una foto real
+
+La referencia cambió de `imagen/personajeSpider.jpg` (ya no existe en disco) a
+`imagen/spider.png`: 509×704px, un chibi pixel-art ya "blocky" (grande, con bordes duros,
+prácticamente en escala de grises: unos ~207 tonos que en la práctica colapsan en 5 bandas
+de luminancia bien separadas — ver histograma comentado en
+`scripts/generate-mascot-sprite.mjs`).
+
+**Decisión: decodificar y reducir la imagen real, no redibujar la silueta a mano en ASCII**
+(que era el enfoque de §5, usado con la referencia JPG anterior). Razones:
+
+1. La imagen nueva es de calidad suficiente para hacerlo fielmente — el intento manual
+   anterior (§8.0) tuvo que iterar dos veces para aproximarse a la silueta real; partir de
+   los píxeles reales de una foto de mayor resolución elimina esa brecha de raíz.
+2. `scripts/generate-mascot-sprite.mjs` ya tenía un encoder PNG manual sin dependencias
+   (firma + chunks + `deflateSync` + CRC32 propio); decodificar es exactamente la mitad
+   simétrica (mismos chunks + `inflateSync` + revertir los 5 filtros de scanline de la
+   spec de PNG). Cero dependencias nuevas, mismo criterio que el resto del proyecto.
+3. Mantiene "cero dependencias también en la generación del arte", no sólo en su animación
+   en runtime (regla dura ya establecida en §5).
+
+**Pipeline** (`frontend/scripts/lib/png.mjs` + `generate-mascot-sprite.mjs` +
+`generate-favicon.mjs`):
+
+1. `decodePng`: parsea chunks, concatena `IDAT`, `zlib.inflateSync`, revierte los filtros
+   PNG (None/Sub/Up/Average/Paeth) scanline por scanline → buffer RGBA plano.
+2. Recorte al bounding box de píxeles con alfa ≥ 128 (la fuente trae margen transparente).
+3. **Downsampling nearest-neighbor** (nunca promediado/bilinear — es lo que preserva los
+   bordes duros del pixel art) a un frame de 32×40px. El frame ya NO es cuadrado: la
+   referencia real es más alta que ancha (bbox ≈ 484×669, ratio 0.72); 32×40 (ratio 0.8) se
+   acerca sin achatar la figura. El componente `Mascot` se actualizó para un frame no
+   cuadrado (`spriteSheet.ts` nuevo: `NATIVE_FRAME_W`/`NATIVE_FRAME_H` separados; antes
+   `NATIVE_FRAME` único de 16px cuadrado) — `size` ahora es el ALTO renderizado y el ancho
+   se deriva de la proporción real del frame.
+4. Cuantización por banda de luminancia a los tokens estructurales YA existentes en la
+   paleta (`pixel-bg`/`pixel-ink`/`pixel-ink2`/`pixel-slate` — cero colores nuevos): las
+   bandas oscuras (contorno, sombrero, abrigo) se mapean 1:1 a esos 4 tonos, y la banda
+   clara (177 en la imagen original: las gafas) se separa como región de "acento", la única
+   que cambia de color por estado — mismo mecanismo que la v1 manual, pero ahora aplicado
+   sobre una silueta real en vez de dibujada.
+5. Se generan 2 frames de animación por estado (parpadeo simple para idle/calm/alert;
+   patrón de gafas irregular para `confused`, igual criterio que antes) × 4 columnas
+   (idle/calm/alert/confused) → sheet de 128×80px.
+6. `generate-favicon.mjs` reutiliza el mismo pipeline pero recorta al bbox de la
+   **cabeza** (sombrero + gafas, ~62% superior de la figura) en vez del cuerpo completo,
+   para que la silueta reconocible no quede diminuta a tamaño de favicon.
+
+El resultado se inspeccionó ampliado 10× (`node --input-type=module` con un script
+temporal de escalado nearest-neighbor + el mismo `encodePng`) antes de integrarlo: las
+4 columnas muestran fielmente el sombrero fedora de ala ancha, las gafas ovaladas que se
+juntan en V al centro, y el abrigo con brazos plegados de la referencia — sensiblemente
+más fiel que el intento ASCII de §8.0, que es exactamente la hipótesis que motivó el
+cambio de enfoque.
+
+### 9.3 Layout — sidebar fijo + columna de chat, full-bleed
+
+```
+┌──────────────┬──────────────────────────────────────────────┐
+│              │  header: mascota mini + estado                │
+│  Historial   ├──────────────────────────────────────────────┤
+│  (alto       │  mensajes (scroll, crece hacia abajo)          │
+│  completo,   │   • personaje: saludo                          │
+│  16rem fijo) │        usuario →                               │
+│              │   • personaje: "revisando fuentes…" (typing)   │
+│  [debug      │   • personaje: veredicto (badges + filas)      │
+│   VULN-08]   ├──────────────────────────────────────────────┤
+│              │  composer (un input + enviar)                  │
+└──────────────┴──────────────────────────────────────────────┘
+     CameraChrome fijo por encima: esquinas HUD + REC + timestamp + viñeta
+```
+
+`grid-cols-[16rem_1fr]` en el contenedor raíz, `h-screen`/`overflow-hidden` — la app ocupa
+el viewport completo, sin columna centrada con `max-w-*`. El historial (`History.tsx`,
+restyleado, misma `useHistory` sin tocar) vive en el sidebar, nunca mezclado con los
+mensajes — sigue paginado y en el mismo orden que entrega el backend. El chat es la única
+zona que hace scroll; header y composer quedan fijos arriba/abajo de la columna central.
+
+**Conversación**: el personaje abre con un saludo pidiendo IP/hash/dominio
+(`chatMessages.ts::initialMessages`). El usuario escribe libre; `detectIocType` (sin
+tocar) decide el tipo — si no reconoce nada, el personaje pide aclarar en el mismo hilo
+(mensaje `unrecognized`) en vez de bloquear con un error de formulario. Si lo reconoce,
+aparece la burbuja del usuario + un indicador de "Revisando fuentes…" que reutiliza el
+estado `scanning` de la mascota (gafas parpadeando rápido) como pide la consigna; al
+resolver, ESA MISMA burbuja se reemplaza (no se agrega una nueva) por el veredicto —
+`conversationReducer` en `components/chat/chatMessages.ts` es una máquina de estados pura,
+sin React, testeada aparte de cualquier hook (`chatMessages.test.ts`).
+
+Cada mensaje del personaje trae su propio avatar de mascota con el estado que le
+corresponde A ESE MENSAJE (`scanStatus`/`level` explícitos por burbuja, mismo componente
+`Mascot`/`mascotState.ts` sin tocar) — así una burbuja de veredicto vieja se queda
+reaccionando a SU resultado aunque el usuario ya haya mandado otra consulta después.
+
+### 9.4 Veredicto enriquecido dentro de la burbuja
+
+El veredicto ya no es un panel aparte: es contenido estructurado (badge + `RiskMeter`
+reusado sin tocar + filas clave-valor) dentro de la burbuja del personaje
+(`VerdictMessage.tsx`), precedido por una frase en primera persona
+(`lib/verdictPresentation.ts::narrativeIntroFor`, switch exhaustivo por nivel — mismo
+criterio anti-regresión que `VerdictBadge`/`RiskMeter`) para que se lea como que el
+personaje está explicando el resultado, no como una tabla pegada.
+
+Los campos enriquecidos por fuente que el backend está agregando en paralelo
+(`categories`/`usageType`/`domain` para IP; `threatCategory`/`threatLabel`/`threatNames`
+para hash; `tags`/`threatType` para dominio) se leen a través de
+`verdictPresentation.ts::enrichedDetailRows`, que trata cada campo como
+`string | number | boolean | array | null | undefined` y nunca deja pasar `"undefined"` a
+pantalla: si ninguno está presente hoy (el backend aún no los shippeó, o la fuente no
+aplica), la fila se omite y `SourceReportCard` muestra "sin información adicional de la
+fuente" — cubierto por `verdictPresentation.test.ts` con los tres shapes (IP/hash/dominio)
+y el caso vacío/null/`[]`.
+
+`score: null` en `unknown` sigue sin poder leerse como "0/100" — `RiskMeter` no se tocó, y
+`chatMessages.test.ts` agrega una guarda de regresión propia que hace viajar un veredicto
+`unknown` completo por el reducer y confirma que `score` llega `null` intacto al mensaje.
+
+### 9.5 "Cámara vieja de vigilancia" — todo el tiempo, no sólo en alertas
+
+Pedido explícito: la sensación CCTV/terror sutil corre siempre, no sólo cuando hay un
+veredicto malicioso — y es lo que llena el borde de la pantalla que antes quedaba vacío.
+`components/fx/CameraChrome.tsx` (reemplaza a `GlitchOverlay.tsx`, eliminado) es un overlay
+fijo, `aria-hidden`, sobre toda la app:
+
+| Pieza | Qué es | Continuo/one-shot |
+|---|---|---|
+| Esquinas HUD | 4 marcos en L, chrome estático de Tailwind puro | estático |
+| REC | punto rojo + label, pulso 1.6s (0.625Hz) entre opacidad 1 y 0.55 | continuo, lento |
+| Timestamp | reloj real (`useCorruptedClock`, tick de 1s) que cada 6-11s corrompe UN dígito por ~400ms y se autocorrige | continuo (tick) + one-shot infrecuente (corrupción) |
+| Viñeta | radial-gradient estático a los bordes | estático |
+| Grano (`fx-grain`) | sólo `background-position` se anima (nunca opacidad) — cero cambio de luminancia total | continuo |
+| Rolling scanline (`fx-scan-roll`) | franja translúcida que baja en loop de 7s, opacidad FIJA en 0.10 | continuo, muy lento |
+| "Feed" del contenido (`fx-feed-jitter`, en el wrapper de sidebar+chat, NO en el chrome) | 1px de temblor + un dip de opacidad de ~6% cada 3.6s — el "corte de milisegundos" pedido | continuo, muy lento |
+| Burst por mensaje (`fx-burst-message`) | RGB split de 1px, 320ms, dispara en CADA mensaje nuevo del personaje | one-shot, alta frecuencia de disparo |
+| Bursts temáticos (`fx-burst-malicious`+`fx-noise-burst`, `fx-burst-unknown`+`fx-jitter-confused`) | los de §8, ahora aplicados sobre `VerdictMessage` en vez de `VerdictPanel` | one-shot |
+
+Decisión deliberada de diseño: el chrome (REC/timestamp/HUD) **no tiembla** — sólo el
+"feed" (sidebar+chat) lleva el jitter continuo, igual que una cámara de vigilancia real
+donde la superposición de texto en pantalla es estable aunque la imagen del sensor se
+degrade. Es lo que hace legible "esto es una interfaz sobre un feed", no ruido uniforme.
+
+**Por qué sigue siendo seguro para fotosensibilidad (WCAG 2.3.1), con MÁS disparos que
+antes:** la instrucción explícita fue subir la frecuencia sin subir intensidad/duración por
+disparo, y eso es exactamente lo que hace cada clase nueva:
+
+- Ningún efecto nuevo anima opacidad de un cuadro grande de pantalla en una banda de
+  3-60Hz. Los períodos continuos son 1s (grano, pero sin animar opacidad — sólo posición),
+  1.2s (puntos de tipeo), 1.6s (REC), 3.6s (feed jitter), 7s (scan-roll): todos muy por
+  debajo de cualquier lectura como parpadeo.
+- Los one-shot (`fx-burst-message`, 320ms) pueden repetirse en cada mensaje nuevo — la
+  frecuencia de disparo subió, como pedía el brief — pero cada ciclo individual sigue
+  siendo ≤ 320ms, amplitud de 1px/`drop-shadow` sin blur, exactamente el mismo criterio de
+  amplitud que ya tenían `fx-burst-malicious`/`fx-burst-unknown` en §8.3.
+- `fx-grain` es el caso límite más cuidado: se verificó explícitamente que SÓLO
+  `background-position` está en el `@keyframes`, nunca `opacity` — un patrón que se
+  desplaza sin cambiar su densidad total no produce ningún flash de luminancia,
+  sin importar cuántas veces por segundo se mueva.
+
+### 9.6 `prefers-reduced-motion` — ahora también apaga lo continuo
+
+El bloque de §8.2 sólo tenía que apagar ráfagas ligadas a eventos. Con la capa CCTV
+corriendo todo el tiempo, el bloque `@media (prefers-reduced-motion: reduce)` de
+`styles/index.css` creció para cubrir los 6 efectos nuevos, con la misma lógica de antes
+(congelar en un estado estático con sentido, no sólo apagar la animación a secas):
+
+- `fx-grain` → se queda como textura fija en `background-position: 0 0` (igual criterio
+  que `fx-scanlines`).
+- `fx-scan-roll` → `display: none` (no tiene una versión estática con sentido).
+- `fx-rec-pulse` → `opacity: 1` fijo (el REC se queda sólido, no parpadea).
+- `fx-typing-dot` → congelado visible pero quieto.
+- `fx-burst-message`/`fx-feed-jitter` → `animation: none`, sin ráfagas ni temblor.
+- `useCorruptedClock` verifica `prefers-reduced-motion` ANTES de programar el primer
+  temporizador de corrupción (mismo patrón que `useAmbientGlitch` en §8.2) — el reloj
+  real sigue funcionando (mostrar la hora no es "movimiento"), pero nunca se arma el
+  timer que le hace mostrar un dígito equivocado.
+- `usePrefersReducedMotion.ts` (nuevo) centraliza la lectura de `matchMedia` — antes vivía
+  duplicada dentro de `useAmbientGlitch`; ahora la comparten ese hook, `useCorruptedClock`
+  y cualquier efecto CCTV futuro.
+
+Verificado con Playwright forzando `prefers-reduced-motion: reduce` vía
+`page.emulateMedia()` y leyendo `getComputedStyle(...).animationName` de cada clase — ver
+el reporte de verificación de esta entrega.
+
+### 9.7 VULN-07/VULN-08 — dónde quedaron en el rediseño
+
+- **VULN-07 (CWE-79, XSS)** se movió de un `VerdictPanel` que ya no existe a
+  `VerdictMessage.tsx`: el "resumen técnico" del veredicto (`scan.verdict.summary`) se
+  renderiza con `dangerouslySetInnerHTML` sin sanitizar. Detalle completo:
+  `docs/vulnerabilities/VULN-07.md`.
+- **VULN-08 (CWE-200, API key en el bundle)** es nuevo en esta entrega:
+  `lib/insecureDirectAbuseIpdbCheck.ts` llama directo a AbuseIPDB desde el navegador con
+  una key hardcodeada, invocado sólo desde un botón de "debug" aislado en el sidebar
+  (`DirectCheckDebugPanel.tsx`) que nunca se dispara solo. Detalle completo:
+  `docs/vulnerabilities/VULN-08.md`.
+
+### 9.8 Qué se preservó sin tocar (por instrucción explícita)
+
+`lib/types.ts`, `lib/api.ts`, `lib/iocDetect.ts`, `hooks/useScan.ts`, `hooks/useHistory.ts`
+y `components/mascot/mascotState.ts` (el contrato de 4 estados + `assertUnreachable`) no
+se modificaron. `App.tsx`, `ScanForm.tsx` (eliminado, reemplazado por `ChatComposer.tsx` +
+`useConversation.ts`) y `VerdictPanel.tsx` (eliminado, reemplazado por `VerdictMessage.tsx`)
+sí se reemplazaron por completo, como autorizaba la consigna del rediseño.
+
+> **Nota de vigencia:** `hooks/useHistory.ts` sí se eliminó después, en §10 — la lista de
+> "preservados sin tocar" de arriba describe el estado de esa entrega puntual, no el actual.
+
+## 10. Sin sidebar de historial — sólo el chat, y un fondo ambiental nuevo
+
+Feedback textual tras probar el rediseño de §9: *"No tiene sentido el historial si es un
+chat, borremos ese historial y dejemos solo el chat"* y *"De fondo del chat quiero una
+araña y en espacios libres telerañas igual que tengan glitch de color de amenaza como lo
+tiene el personaje."* Dos cambios puntuales sobre el chat de §9, no otro rediseño completo.
+
+### 10.1 Historial eliminado, no reemplazado por nada
+
+El sidebar (`components/scan/History.tsx` + `hooks/useHistory.ts`) se borró por completo,
+junto con la columna del grid (`grid-cols-[16rem_1fr]`) que lo alojaba en `App.tsx` — el
+layout pasa a ser un único `flex flex-col` a ancho completo. La conversación en curso
+(`useConversation`) sigue siendo la única "memoria" visible; no hay ningún reemplazo
+funcional del historial, como pedía explícitamente el feedback. `useConversation` perdió el
+callback `onExchangeSettled` (existía sólo para refrescar el sidebar tras cada intercambio)
+— se confirmó primero que ningún otro consumidor lo necesitaba antes de sacarlo.
+`GET /api/history` sigue vivo en el backend sin cambios: el frontend simplemente dejó de
+consumirlo, no es un endpoint que se haya dado de baja.
+
+### 10.2 Fondo ambiental — araña + telarañas con el mismo tinte de amenaza que la mascota
+
+El espacio libre que dejó el sidebar (los laterales de la columna de chat en viewports
+anchos, antes ocupados por el panel de historial) se llena con `components/fx/
+ThreatBackdrop.tsx`: una capa fija, `aria-hidden`, `pointer-events: none`, detrás de todo el
+contenido real, con una silueta de araña + telarañas de esquina a opacidad baja
+(`opacity-10` — dentro del rango 0.08–0.18 pedido) para que nunca compita con la
+legibilidad de los mensajes (las burbujas de chat siguen siendo bloques opacos por encima
+de esta capa, ver `MessageBubble.tsx`).
+
+**Los motivos** (`components/fx/spiderMotifs.tsx`) son SVG inline, no un sprite PNG nuevo:
+- `SpiderSilhouette`: dos bloques sólidos (cefalotórax + abdomen) + 8 patas, cada una un
+  quiebre de dos segmentos RECTOS (`M-L-L`, nunca una curva) — mismo lenguaje de "sprite"
+  de bordes duros que el resto de la identidad visual (§3), aplicado como vector porque es
+  un elemento puramente decorativo de baja opacidad que no necesita animarse fotograma a
+  fotograma como la mascota.
+- `WebMotif`: 8 hilos radiales (líneas rectas a ángulos exactos) + 3 anillos POLIGONALES
+  (nunca círculos concéntricos — una telaraña real es poligonal, no circular, así que esto
+  es a la vez más fiel al referente y consistente con "sin curvas suaves"), generados
+  proceduralmente con trigonometría en vez de coordenadas a mano. Se posicionan con su
+  CENTRO fuera del viewport (`-left-14 -top-14`, etc., sobre un contenedor con
+  `overflow-hidden`) para que sólo se vea el cuarto de tela que cae en cada esquina real —
+  el clásico look de telaraña de rincón.
+- Ambos usan `stroke="currentColor"` / `fill="currentColor"`, nunca un color propio: heredan
+  el tinte de quien los envuelve.
+
+**Mapeo de color — mismo switch que la mascota, nunca uno paralelo:**
+`components/mascot/mascotState.ts` gana `threatTintClassFor(state, level)`, hermano
+directo de `haloClassFor` (mismas ramas: `confused`→`text-pixel-unknown`,
+`calm`→`text-pixel-clean`, `alert`→`text-pixel-malicious`/`text-pixel-suspicious` según
+`level`, `idle`/`scanning`→`text-pixel-slate` neutro). La diferencia con `haloClassFor` es
+sólo la forma de salida: una clase de texto (`text-pixel-*`) en vez de un `box-shadow`,
+porque acá el color necesita propagarse a `currentColor` dentro del SVG, no pintar un halo
+puntual alrededor de un sprite. `App.tsx` le pasa a `ThreatBackdrop` exactamente el mismo
+`scanStatus`/`level` que ya calculaba para el header y para `<Mascot>` — ningún estado
+nuevo, ninguna fuente de verdad paralela.
+
+**Glitch — vocabulario reutilizado tal cual, cero clases nuevas:** `ThreatBackdrop` dispara
+la MISMA ráfaga de un solo ciclo que `Mascot.tsx` al revelarse un veredicto
+`malicious`/`unknown` (`fx-burst-malicious` / `fx-burst-unknown`, mismo flanco
+`loading → success`, mismas duraciones 560ms/480ms) y el MISMO temblor continuo en
+`confused`/`scanning` (`fx-jitter-confused` / `fx-jitter-scanning`) — las clases literales
+que ya existían en `styles/index.css`, aplicadas a un nodo distinto (el fondo en vez del
+sprite), nunca un sistema de efectos paralelo. `clean`/`suspicious` sólo cambian el tinte de
+color al instante (igual que `haloClassFor` con el halo de la mascota), sin ráfaga — mismo
+criterio de "no todo glitchea" que ya regía en §8.1. Misma disciplina de 3 nodos anidados
+que `Mascot.tsx` (jitter continuo → ráfaga de un ciclo → contenido) para que dos clases con
+`animation` en el mismo elemento no se cancelen entre sí.
+
+Como es reutilización literal de clases ya existentes, el bloque
+`@media (prefers-reduced-motion: reduce)` de `styles/index.css` las cubre automáticamente
+sin necesitar ningún agregado — se verificó con Playwright (`getComputedStyle(...)
+.animationName === 'none'` para `fx-jitter-confused`, `fx-jitter-scanning` y
+`fx-burst-malicious` con `prefers-reduced-motion: reduce` emulado) que el fondo también
+queda quieto, igual que la mascota y el resto de la capa CCTV.
+
+**Bug de stacking encontrado y corregido durante la verificación visual:** la primera
+versión posicionaba `ThreatBackdrop` con `position: fixed` y `z-index` NEGATIVO (`-z-10`)
+para garantizar que quedara detrás del contenido sin tener que tocar el stacking de
+`CameraChrome` ni de la columna de chat. Pero el `<div>` raíz de `App.tsx` tenía su propio
+`bg-pixel-bg` — al ser un elemento NO posicionado, ese fondo se pinta en el paso de
+"descendientes en flujo normal" del contexto de apilamiento, que ocurre DESPUÉS del paso de
+"descendientes con z-index negativo" (spec de CSS 2.1 §E.2), sin importar el anidamiento en
+el DOM. Resultado: el fondo opaco del `<div>` raíz tapaba por completo a `ThreatBackdrop`,
+invisible en la primera captura de Playwright. Fix: se sacó `bg-pixel-bg` del `<div>` raíz
+de `App.tsx` — el color final es idéntico porque `body` (el verdadero fondo del contexto de
+apilamiento raíz, ver `styles/index.css`) ya pinta ese mismo tono por debajo de todo,
+incluido cualquier descendiente con z-index negativo.
+
+## 11. Fondo ambiental — pixel-art fotográfico, no vector de líneas; glitch continuo; mascota principal más grande
+
+Tres pedidos puntuales sobre el estado de §10, con `imagen/araña.png` (980×980, ya pixel
+art nativo: bloques de ~52px, fondo transparente) como nueva referencia — no reemplaza
+`imagen/spider.png` (sigue siendo la fuente del sprite de la mascota).
+
+### 11.1 `SpiderSilhouette` pasa de SVG de líneas rectas a máscara PNG downsampleada
+
+Igual que el sprite de la mascota (§5), el criterio de origen del arte es "downsamplear una
+foto real", no "redibujar la silueta a mano". `scripts/generate-backdrop-spider.mjs` (mismo
+codec sin dependencias de `scripts/lib/png.mjs`) decodifica `imagen/araña.png`, recorta al
+bounding box de contenido y reduce con NEAREST NEIGHBOR a una grilla de 40×40 — la
+referencia ya viene bloqueada nativamente (~19×19 bloques de ~52px), así que este paso sólo
+re-cuantiza a una grilla de salida manejable sin introducir antialiasing. A diferencia del
+sprite de la mascota (que cuantiza a varias bandas de color porque tiene una región de
+acento recoloreable), acá sólo hace falta una MÁSCARA ALFA pura: blanco 100% opaco donde hay
+silueta, transparente donde no — el color final nunca se hornea en el PNG.
+
+**Cómo se preserva el tinte dinámico sin duplicar la paleta:** `SpiderSilhouette` (`fx/
+spiderMotifs.tsx`) ya no es un `<svg>`, es un `<div>` con `mask-image: url(/sprites/
+backdrop-spider.png)` + la clase Tailwind `bg-current` (`background-color: currentColor` —
+no es un color nuevo, es el keyword que ya usaba el `fill="currentColor"` del SVG anterior) +
+`image-rendering: pixelated` inline (mismo requisito duro que cualquier sprite escalado del
+proyecto). `ThreatBackdrop` sigue fijando el color exactamente igual que antes, con la MISMA
+clase `text-pixel-*` de `threatTintClassFor` — `SpiderSilhouette` no sabe qué color es, sólo
+hereda `currentColor`. Cero sistema de tinte paralelo.
+
+### 11.2 `WebMotif` pasa de líneas SVG finas a un raster de bloques (Bresenham)
+
+Las telarañas de esquina no vienen de una foto — no había una referencia fotográfica de
+telaraña que downsamplear — pero tenían que dejar de leerse como un vector geométrico aparte
+y pasar a compartir el lenguaje "pixel-art" de la araña. Se mantiene SVG puro con
+`fill="currentColor"` (mismo mecanismo de tinte, sin PNG), pero los hilos radiales y los
+anillos poligonales ya no se trazan con `<line>`/`<polygon>` (líneas perfectamente rectas);
+se rasterizan con el algoritmo de línea de Bresenham a una grilla entera de 24×24 y se
+renderizan como bloques `<rect width="1" height="1">` — el mismo "escalonado" que un pixel
+artista dibuja a mano para una diagonal, calculado proceduralmente en vez de a mano.
+
+### 11.3 Glitch continuo en el fondo — ya no sólo en el burst de un veredicto
+
+Pedido textual: *"El glitch debe estar en estos elementos que son de fondo (...) cuando sea
+clean los bordes se difumina de verde y así con las demás, también debe haber un glitch de
+parpadeo de píxeles como que fuera una página hackeada."* Dos clases nuevas en
+`styles/index.css`, ambas CONTINUAS (a diferencia de `fx-burst-*`, que sólo corren una vez al
+revelarse un veredicto `malicious`/`unknown`):
+
+- **`.fx-backdrop-glow`** — difuminado de borde: `filter: drop-shadow(... currentColor)`
+  animando sólo el radio del blur (3px↔6px / 7px↔11px, doble capa), 2.6s `ease-in-out`
+  infinito. Vive en el mismo nodo que ya tiene `tintClass`, así que el `currentColor` que
+  toma el `drop-shadow` es EXACTAMENTE el mismo verde/ámbar/rojo/violeta/neutro que
+  `threatTintClassFor` ya decide para el resto del fondo — no hay una segunda fuente de color.
+- **`.fx-backdrop-hack`** — parpadeo de píxeles "pantalla hackeada": mismo vocabulario de
+  ruido que `.fx-grain`/`.fx-noise-burst` (`repeating-conic-gradient` + saltos de
+  `background-position`), pero CONTINUO y coloreado con `currentColor` (no el gris neutro de
+  `.fx-grain`, que es la capa CCTV y sigue siendo neutra a propósito). 2.2s,
+  `steps(1, jump-end)`, varias paradas de opacidad dentro del ciclo (mismo patrón que
+  `.fx-jitter-confused`) para que se sienta digital/entrecortado. Vive en un nodo HERMANO del
+  que tiene `opacity-10` (no un hijo): si viviera adentro, su propia opacidad se
+  multiplicaría con ese `0.1` y quedaría invisible por composición.
+
+Amplitud/timing revisados contra WCAG 2.3.1 (mismas reglas que rigen todo `styles/index.css`
+desde §8): ningún ciclo cae en la banda de parpadeo 3-60Hz (períodos de 2.2s/2.6s, muy por
+debajo), sólo se anima `filter`/`opacity`/`background-position` (nunca layout), y ambas
+clases se suman al bloque `@media (prefers-reduced-motion: reduce)` YA EXISTENTE (no uno
+nuevo) — `.fx-backdrop-glow` se congela en un drop-shadow de radio fijo (mismo criterio que
+`.fx-scanlines`/`.fx-grain`: textura estática en vez de desaparecer del todo) y
+`.fx-backdrop-hack` se apaga por completo (es puro ruido intermitente, no hay información que
+se pierda al quitarlo). Verificado con Playwright: `getComputedStyle(...).animationName`
+pasa de `fx-backdrop-glow-breathe`/`fx-backdrop-hack-flicker` a `none` con
+`prefers-reduced-motion: reduce` emulado, igual que el resto de la capa `fx-*`.
+
+### 11.4 Mascota del header — de 40px a 88px
+
+`App.tsx` usa `<Mascot size={88} />` en el header en vez de 40 — "el personaje principal", a
+diferencia del avatar chico repetido en cada burbuja de chat (`MascotMessage.tsx`, se queda
+en 40 porque se repite por mensaje y un avatar de chat grande rompería la lectura de la
+conversación). El `<div>` que envuelve `<Mascot>` en el header gana `shrink-0`: al ser un
+hijo de un `flex` junto al bloque de título/subtítulo (`min-w-0` + `truncate`), sin
+`shrink-0` el navegador podía comprimir el sprite por debajo de su tamaño declarado en
+viewports angostos en vez de truncar el texto de al lado. Verificado en 375px de ancho
+(`sm:` y por debajo) con Playwright: el header no se rompe, el título/subtítulo siguen
+truncando en vez de empujar el layout.

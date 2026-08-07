@@ -276,6 +276,30 @@ que es un mapeo casi directo.
 *Umbral 75* es el corte a partir del cual los reportes son numerosos y consistentes.
 Un score 0 con 0 reportes significa "nadie la ha reportado", que es débil → `confidence 0.3`.
 
+**Campos narrativos de `details`** (para que el frontend explique el porqué del
+veredicto, no solo el número):
+
+| Campo | Tipo | Origen | Fallback |
+|---|---|---|---|
+| `usageType` | `string \| null` | `data.usageType` (ej. `"Data Center/Web Hosting/Transit"`, `"Fixed Line ISP"`) | `null` si falta |
+| `domain` | `string \| null` | `data.domain` (dominio registrado / reverse DNS) | `null` si falta |
+| `categories` | `string[]` | Unión deduplicada de `data.reports[].categories`, traducida de código numérico a etiqueta legible con la tabla oficial de AbuseIPDB (ver abajo) | `[]` si `data.reports` no viene (plan gratuito, o simplemente no incluido) |
+
+Tabla de traducción código → etiqueta (fuente: https://www.abuseipdb.com/categories,
+documentada también como comentario en `abuseipdb.js`):
+
+```
+1 DNS Compromise · 2 DNS Poisoning · 3 Fraud Orders · 4 DDoS Attack ·
+5 FTP Brute-Force · 6 Ping of Death · 7 Phishing · 8 Fraud VoIP ·
+9 Open Proxy · 10 Web Spam · 11 Email Spam · 12 Blog Spam · 13 VPN IP ·
+14 Port Scan · 15 Hacking · 16 SQL Injection · 17 Spoofing · 18 Brute-Force ·
+19 Bad Web Bot · 20 Exploited Host · 21 Web App Attack · 22 SSH · 23 IoT Targeted
+```
+
+Un código no listado en la tabla nunca lanza excepción: cae a un fallback
+`"Categoría {código}"`. La narrativa es de mejor esfuerzo — nunca debe tumbar la
+normalización.
+
 ### 3.3 VirusTotal (`hash`)
 
 Entrada: **conteos por engine**, no un score. Hay que construir la escala.
@@ -314,6 +338,17 @@ contestó ("no tengo registro de este archivo") es una observación real sobre e
 convertiría en no concluyente cualquier fichero nunca visto, que es la mayoría, y
 vaciaría de utilidad tanto al nivel `clean` como al propio `unknown`.
 
+**Campos narrativos de `details`:**
+
+| Campo | Tipo | Origen | Fallback |
+|---|---|---|---|
+| `threatCategory` | `string \| null` | `data.attributes.popular_threat_classification?.popular_threat_category?.[0]?.value` | `null` si falta la clasificación o el array está vacío |
+| `threatLabel` | `string \| null` | `data.attributes.popular_threat_classification?.suggested_threat_label` | `null` si falta |
+| `threatNames` | `string[]` | `data.attributes.popular_threat_classification?.popular_threat_name`, mapeado a `.value`, deduplicado | `[]` si falta la clasificación |
+
+`popular_threat_classification` solo aparece en archivos con detecciones significativas;
+un archivo limpio no la trae, y los tres campos caen a su fallback sin lanzar excepción.
+
 ### 3.4 URLhaus (`domain`)
 
 Entrada: estado de listado, no numérico. Se traduce por estado.
@@ -328,6 +363,13 @@ Entrada: estado de listado, no numérico. Se traduce por estado.
 Rationale: un dominio que **estuvo** distribuyendo malware pero cuyas URLs están caídas
 sigue siendo sospechoso (infraestructura comprometida, suele reactivarse), pero no es
 una amenaza activa → `suspicious`, no `malicious`.
+
+**Campos narrativos de `details`:**
+
+| Campo | Tipo | Origen | Fallback |
+|---|---|---|---|
+| `tags` | `string[]` | Unión deduplicada de `entry.tags` a través de todas las `urls[]` (cada `entry.tags` es un array de strings, ej. `["elf","mirai"]`) | `[]` si no hay `urls` o ninguna trae `tags` (incluye `no_results`) |
+| `threatType` | `string \| null` | `entry.threat` de la primera URL que lo tenga | `null` si ninguna lo trae (incluye `no_results`) |
 
 ---
 

@@ -108,14 +108,34 @@ export function loadConfig(env = process.env) {
     nodeEnv: env.NODE_ENV ?? 'development',
     version: readVersion(),
     port: readInteger(env, 'PORT', 3000, { min: 1, max: 65535 }),
+    // Sin esto Node liga a 0.0.0.0: cualquiera en la misma red (LAN, wifi
+    // compartido) podria pegarle a la API y gastar la cuota real de las
+    // fuentes externas contra las credenciales del operador. localhost por
+    // defecto; solo se abre a la red si el operador lo pide explicitamente.
+    host: env.HOST?.trim() || '127.0.0.1',
 
     useMockSources,
     sourceTimeoutMs: readInteger(env, 'SOURCE_TIMEOUT_MS', 5000, { min: 100, max: 60000 }),
     abuseipdbApiKey: useMockSources ? null : readRequiredSecret(env, 'ABUSEIPDB_API_KEY'),
     virustotalApiKey: useMockSources ? null : readRequiredSecret(env, 'VIRUSTOTAL_API_KEY'),
-    // URLhaus no exige credencial para la Host API; si el operador tiene una
-    // Auth-Key de abuse.ch se usa, pero nunca es obligatoria.
+    // Sin tipo obligatorio en el arranque (no tumba el proceso si falta),
+    // pero en la practica HOY ES REQUERIDA: la politica "Community First" de
+    // abuse.ch (2024-2025) devuelve 401 en toda la Host API sin Auth-Key.
     urlhausAuthKey: env.URLHAUS_AUTH_KEY?.trim() || null,
+
+    // Limites diarios del tier gratuito de cada proveedor. AbuseIPDB los
+    // confirma en cada respuesta via headers (X-RateLimit-*); estos valores
+    // son solo el punto de partida antes de la primera reconciliacion.
+    // VirusTotal no expone remanente por header de forma confiable, asi que
+    // este numero es la unica fuente de verdad hasta el proximo reset diario.
+    abuseipdbDailyLimit: readInteger(env, 'ABUSEIPDB_DAILY_LIMIT', 1000, {
+      min: 1,
+      max: 1_000_000,
+    }),
+    virustotalDailyLimit: readInteger(env, 'VIRUSTOTAL_DAILY_LIMIT', 500, {
+      min: 1,
+      max: 1_000_000,
+    }),
 
     historyMaxEntries: readInteger(env, 'HISTORY_MAX_ENTRIES', 200, { min: 1, max: 10000 }),
     historyMaxPageSize: readInteger(env, 'HISTORY_MAX_PAGE_SIZE', 100, { min: 1, max: 500 }),

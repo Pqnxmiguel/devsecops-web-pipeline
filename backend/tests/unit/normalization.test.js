@@ -72,6 +72,57 @@ describe('normalizeAbuseipdb', () => {
   });
 });
 
+describe('normalizeAbuseipdb narrative fields', () => {
+  it('extracts usageType and domain when present', () => {
+    const report = normalizeAbuseipdb({
+      data: {
+        abuseConfidenceScore: 0,
+        totalReports: 0,
+        usageType: 'Fixed Line ISP',
+        domain: 'example-isp.net',
+      },
+    });
+    expect(report.details).toMatchObject({
+      usageType: 'Fixed Line ISP',
+      domain: 'example-isp.net',
+    });
+  });
+
+  it('falls back to null for usageType and domain when absent', () => {
+    const report = normalizeAbuseipdb({ data: { abuseConfidenceScore: 0, totalReports: 0 } });
+    expect(report.details.usageType).toBeNull();
+    expect(report.details.domain).toBeNull();
+  });
+
+  it('translates numeric report categories into readable labels, deduplicated', () => {
+    const report = normalizeAbuseipdb({
+      data: {
+        abuseConfidenceScore: 96,
+        totalReports: 3,
+        reports: [
+          { categories: [18, 22] },
+          { categories: [22, 15] },
+        ],
+      },
+    });
+    expect(report.details.categories.sort()).toEqual(
+      ['Brute-Force', 'Hacking', 'SSH'].sort(),
+    );
+  });
+
+  it('falls back to a generic label for an unlisted category code without throwing', () => {
+    const report = normalizeAbuseipdb({
+      data: { abuseConfidenceScore: 50, totalReports: 1, reports: [{ categories: [99] }] },
+    });
+    expect(report.details.categories).toEqual(['Categoría 99']);
+  });
+
+  it('defaults categories to an empty array when reports is missing', () => {
+    const report = normalizeAbuseipdb({ data: { abuseConfidenceScore: 0, totalReports: 0 } });
+    expect(report.details.categories).toEqual([]);
+  });
+});
+
 describe('normalizeVirustotal', () => {
   it('maps zero detections across many engines to clean', () => {
     expect(normalizeVirustotal(vtPayload({})).level).toBe('clean');
@@ -138,6 +189,54 @@ describe('normalizeVirustotal', () => {
   });
 });
 
+describe('normalizeVirustotal narrative fields', () => {
+  function vtPayloadWithClassification(classification) {
+    return {
+      data: {
+        attributes: {
+          last_analysis_stats: { malicious: 51, suspicious: 4, harmless: 3, undetected: 15 },
+          popular_threat_classification: classification,
+        },
+      },
+    };
+  }
+
+  it('extracts threatCategory and threatLabel when present', () => {
+    const report = normalizeVirustotal(
+      vtPayloadWithClassification({
+        popular_threat_category: [{ value: 'trojan', count: 30 }],
+        suggested_threat_label: 'trojan.emotet/heodo',
+      }),
+    );
+    expect(report.details.threatCategory).toBe('trojan');
+    expect(report.details.threatLabel).toBe('trojan.emotet/heodo');
+  });
+
+  it('falls back to null for threatCategory and threatLabel when classification is absent', () => {
+    const report = normalizeVirustotal(vtPayloadWithClassification(undefined));
+    expect(report.details.threatCategory).toBeNull();
+    expect(report.details.threatLabel).toBeNull();
+  });
+
+  it('extracts and deduplicates threatNames', () => {
+    const report = normalizeVirustotal(
+      vtPayloadWithClassification({
+        popular_threat_name: [
+          { value: 'emotet', count: 20 },
+          { value: 'heodo', count: 10 },
+          { value: 'emotet', count: 5 },
+        ],
+      }),
+    );
+    expect(report.details.threatNames.sort()).toEqual(['emotet', 'heodo'].sort());
+  });
+
+  it('defaults threatNames to an empty array when classification is absent', () => {
+    const report = normalizeVirustotal(vtPayloadWithClassification(undefined));
+    expect(report.details.threatNames).toEqual([]);
+  });
+});
+
 describe('normalizeUrlhaus', () => {
   it('maps no_results to clean', () => {
     expect(normalizeUrlhaus({ query_status: 'no_results' }).level).toBe('clean');
@@ -186,5 +285,50 @@ describe('normalizeUrlhaus', () => {
 
   it('throws when the query status is one the client cannot interpret', () => {
     expect(() => normalizeUrlhaus({ query_status: 'invalid_host' })).toThrow(SourceError);
+  });
+});
+
+describe('normalizeUrlhaus narrative fields', () => {
+  it('unions and deduplicates tags across all urls', () => {
+    const report = normalizeUrlhaus({
+      query_status: 'ok',
+      urls: [
+        { url_status: 'online', tags: ['elf', 'mirai'] },
+        { url_status: 'offline', tags: ['mirai', 'botnet'] },
+      ],
+    });
+    expect(report.details.tags.sort()).toEqual(['botnet', 'elf', 'mirai'].sort());
+  });
+
+  it('defaults tags to an empty array when no urls carry tags', () => {
+    const report = normalizeUrlhaus({
+      query_status: 'ok',
+      urls: [{ url_status: 'offline' }],
+    });
+    expect(report.details.tags).toEqual([]);
+  });
+
+  it('defaults tags to an empty array for no_results', () => {
+    expect(normalizeUrlhaus({ query_status: 'no_results' }).details.tags).toEqual([]);
+  });
+
+  it('takes threatType from the first url that has one', () => {
+    const report = normalizeUrlhaus({
+      query_status: 'ok',
+      urls: [{ url_status: 'offline' }, { url_status: 'online', threat: 'malware_download' }],
+    });
+    expect(report.details.threatType).toBe('malware_download');
+  });
+
+  it('falls back to null threatType when no url has one', () => {
+    const report = normalizeUrlhaus({
+      query_status: 'ok',
+      urls: [{ url_status: 'offline' }],
+    });
+    expect(report.details.threatType).toBeNull();
+  });
+
+  it('falls back to null threatType for no_results', () => {
+    expect(normalizeUrlhaus({ query_status: 'no_results' }).details.threatType).toBeNull();
   });
 });

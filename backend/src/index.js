@@ -12,9 +12,9 @@
 import { config } from './config/index.js';
 import { createApp } from './app.js';
 
-const server = createApp(config).listen(config.port, () => {
+const server = createApp(config).listen(config.port, config.host, () => {
   console.log(
-    `[ioc-scanner] escuchando en http://localhost:${config.port} ` +
+    `[ioc-scanner] escuchando en http://${config.host}:${config.port} ` +
       `(v${config.version}, fuentes ${config.useMockSources ? 'simuladas' : 'reales'})`,
   );
 });

@@ -29,6 +29,22 @@ function asCount(value) {
 }
 
 /**
+ * Deduplica y extrae `.value` de una lista `popular_threat_name`/
+ * `popular_threat_category` de VirusTotal. Ausente o mal formada -> `[]`,
+ * nunca lanza: es narrativa de mejor esfuerzo, no un dato critico.
+ * @param {unknown} list
+ * @returns {string[]}
+ */
+function extractThreatValues(list) {
+  if (!Array.isArray(list)) return [];
+  const values = new Set();
+  for (const entry of list) {
+    if (typeof entry?.value === 'string') values.add(entry.value);
+  }
+  return [...values];
+}
+
+/**
  * Traduce la respuesta cruda de VirusTotal a un SourceReport.
  * @param {unknown} raw
  */
@@ -54,6 +70,8 @@ export function normalizeVirustotal(raw) {
       kind: 'bad_response',
     });
   }
+
+  const classification = raw.data.attributes.popular_threat_classification;
 
   const detections = malicious + suspicious * 0.5;
   const score = Math.min(100, Math.round((detections / totalEngines) * 100 * SCORE_AMPLIFICATION));
@@ -86,6 +104,9 @@ export function normalizeVirustotal(raw) {
       totalEngines,
       fileName: raw.data.attributes.meaningful_name ?? null,
       fileType: raw.data.attributes.type_description ?? null,
+      threatCategory: classification?.popular_threat_category?.[0]?.value ?? null,
+      threatLabel: classification?.suggested_threat_label ?? null,
+      threatNames: extractThreatValues(classification?.popular_threat_name),
     },
   });
 }
@@ -107,12 +128,17 @@ function unknownFileReport() {
  * @param {string} [options.apiKey]
  * @param {number} [options.timeoutMs]
  * @param {typeof defaultFetchJson} [options.fetchJson]  Inyectable para tests.
+ * @param {ReturnType<typeof import('../quota/quotaTracker.js').createQuotaTracker>} [options.quotaTracker]
+ *   Solo se usa cuando `useMock` es false. VirusTotal no expone remanente por
+ *   header de forma confiable, asi que aca no hay reconciliacion: el
+ *   contador propio del tracker ES la fuente de verdad.
  */
 export function createVirustotalSource({
   useMock,
   apiKey,
   timeoutMs,
   fetchJson = defaultFetchJson,
+  quotaTracker,
 }) {
   return {
     id: SOURCE_ID,
@@ -121,6 +147,14 @@ export function createVirustotalSource({
       if (useMock) {
         return normalizeVirustotal(virustotalMockResponse(ioc));
       }
+
+      if (quotaTracker && !quotaTracker.canConsume(SOURCE_ID)) {
+        throw new SourceError(
+          `La fuente ${SOURCE_ID} alcanzo su cuota diaria; no se intento la llamada real.`,
+          { source: SOURCE_ID, kind: 'rate_limit' },
+        );
+      }
+
       try {
         // `ioc.value` ya paso la validacion de hash: solo [0-9a-f]. Se codifica
         // igualmente por si esa invariante cambiara.
@@ -129,9 +163,18 @@ export function createVirustotalSource({
           timeoutMs,
           headers: { 'x-apikey': apiKey },
         });
+        quotaTracker?.recordUsage(SOURCE_ID);
         return normalizeVirustotal(raw);
       } catch (error) {
-        if (error?.httpStatus === 404) return unknownFileReport();
+        if (error?.httpStatus === 404) {
+          // Un hash desconocido sigue siendo una consulta real completada
+          // (VirusTotal la cuenta contra la cuota igual que cualquier otra).
+          quotaTracker?.recordUsage(SOURCE_ID);
+          return unknownFileReport();
+        }
+        if (quotaTracker && error instanceof SourceError && error.kind === 'rate_limit') {
+          quotaTracker.markExhausted(SOURCE_ID);
+        }
         throw error;
       }
     },
