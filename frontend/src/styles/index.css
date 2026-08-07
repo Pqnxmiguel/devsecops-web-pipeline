@@ -342,6 +342,74 @@
     }
   }
 
+  /* --- Fondo ambiental (araña + telarañas, `ThreatBackdrop.tsx`): dos
+     glitches CONTINUOS nuevos — antes sólo glitcheaba en el burst de un
+     cambio de veredicto, ahora "vive" todo el tiempo. Ver
+     docs/architecture/frontend-design.md §11.
+
+     (a) `.fx-backdrop-glow` — difuminado de borde teñido por el nivel activo:
+     `filter: drop-shadow(...)` en `currentColor`, así hereda EXACTAMENTE el
+     mismo color que ya fija `threatTintClassFor` (verde si `clean`, ámbar/rojo
+     si `suspicious`/`malicious`, violeta si `unknown`, neutro si no hay scan)
+     sin ningún color nuevo. Sólo anima `filter` (radio del blur), período
+     2.6s ease-in-out — muy por debajo de cualquier banda de parpadeo.
+
+     (b) `.fx-backdrop-hack` — parpadeo de píxeles "pantalla hackeada":
+     mismo vocabulario de ruido que `.fx-grain`/`.fx-noise-burst`
+     (`repeating-conic-gradient` + salto de `background-position`), pero
+     CONTINUO en vez de atado a un evento, y coloreado con `currentColor` (el
+     mismo tinte de amenaza) en vez del gris neutro de `.fx-grain`. Período
+     2.2s, `steps(1, jump-end)` para que se sienta digital/entrecortado en vez
+     de una ola suave, con varias paradas dentro del ciclo (mismo patrón que
+     `.fx-jitter-confused`) — sigue siendo UN cambio cada tantos cientos de ms
+     dentro de un período de 2.2s, no una oscilación en la banda 3-60Hz. */
+  .fx-backdrop-glow {
+    animation: fx-backdrop-glow-breathe 2.6s ease-in-out infinite;
+  }
+
+  @keyframes fx-backdrop-glow-breathe {
+    0%,
+    100% {
+      filter: drop-shadow(0 0 3px currentColor) drop-shadow(0 0 7px currentColor);
+    }
+    50% {
+      filter: drop-shadow(0 0 6px currentColor) drop-shadow(0 0 11px currentColor);
+    }
+  }
+
+  .fx-backdrop-hack {
+    background-image: repeating-conic-gradient(currentColor 0% 25%, transparent 0% 50%);
+    background-size: 4px 4px;
+    opacity: 0;
+    animation: fx-backdrop-hack-flicker 2.2s steps(1, jump-end) infinite;
+  }
+
+  @keyframes fx-backdrop-hack-flicker {
+    0%,
+    46%,
+    58%,
+    100% {
+      opacity: 0;
+      background-position: 0 0;
+    }
+    50% {
+      opacity: 0.14;
+      background-position: 2px 1px;
+    }
+    54% {
+      opacity: 0.08;
+      background-position: -1px 2px;
+    }
+    76% {
+      opacity: 0.16;
+      background-position: 1px -1px;
+    }
+    80% {
+      opacity: 0;
+      background-position: 0 0;
+    }
+  }
+
   /* ============================================================
      Capa "cámara vieja de vigilancia" — corre TODO EL TIEMPO, no sólo en un
      veredicto. Ver docs/architecture/frontend-design.md "Dirección visual:
@@ -518,7 +586,9 @@
     .fx-rec-pulse,
     .fx-typing-dot,
     .fx-burst-message,
-    .fx-feed-jitter {
+    .fx-feed-jitter,
+    .fx-backdrop-glow,
+    .fx-backdrop-hack {
       animation: none !important;
     }
 
@@ -557,6 +627,19 @@
     .fx-feed-jitter {
       transform: none;
       opacity: 1;
+    }
+
+    /* Fondo ambiental (§11): el difuminado de borde se queda como un glow
+       estático de radio fijo (mismo criterio que `.fx-grain`/`.fx-scanlines`
+       arriba: textura fija en vez de desaparecer del todo) y el parpadeo de
+       píxeles "hackeado" se apaga por completo — es puro ruido intermitente,
+       sin él no se pierde ninguna información ni identidad visual de base. */
+    .fx-backdrop-glow {
+      filter: drop-shadow(0 0 5px currentColor);
+    }
+
+    .fx-backdrop-hack {
+      opacity: 0;
     }
   }
 }

@@ -521,3 +521,86 @@ invisible en la primera captura de Playwright. Fix: se sacó `bg-pixel-bg` del `
 de `App.tsx` — el color final es idéntico porque `body` (el verdadero fondo del contexto de
 apilamiento raíz, ver `styles/index.css`) ya pinta ese mismo tono por debajo de todo,
 incluido cualquier descendiente con z-index negativo.
+
+## 11. Fondo ambiental — pixel-art fotográfico, no vector de líneas; glitch continuo; mascota principal más grande
+
+Tres pedidos puntuales sobre el estado de §10, con `imagen/araña.png` (980×980, ya pixel
+art nativo: bloques de ~52px, fondo transparente) como nueva referencia — no reemplaza
+`imagen/spider.png` (sigue siendo la fuente del sprite de la mascota).
+
+### 11.1 `SpiderSilhouette` pasa de SVG de líneas rectas a máscara PNG downsampleada
+
+Igual que el sprite de la mascota (§5), el criterio de origen del arte es "downsamplear una
+foto real", no "redibujar la silueta a mano". `scripts/generate-backdrop-spider.mjs` (mismo
+codec sin dependencias de `scripts/lib/png.mjs`) decodifica `imagen/araña.png`, recorta al
+bounding box de contenido y reduce con NEAREST NEIGHBOR a una grilla de 40×40 — la
+referencia ya viene bloqueada nativamente (~19×19 bloques de ~52px), así que este paso sólo
+re-cuantiza a una grilla de salida manejable sin introducir antialiasing. A diferencia del
+sprite de la mascota (que cuantiza a varias bandas de color porque tiene una región de
+acento recoloreable), acá sólo hace falta una MÁSCARA ALFA pura: blanco 100% opaco donde hay
+silueta, transparente donde no — el color final nunca se hornea en el PNG.
+
+**Cómo se preserva el tinte dinámico sin duplicar la paleta:** `SpiderSilhouette` (`fx/
+spiderMotifs.tsx`) ya no es un `<svg>`, es un `<div>` con `mask-image: url(/sprites/
+backdrop-spider.png)` + la clase Tailwind `bg-current` (`background-color: currentColor` —
+no es un color nuevo, es el keyword que ya usaba el `fill="currentColor"` del SVG anterior) +
+`image-rendering: pixelated` inline (mismo requisito duro que cualquier sprite escalado del
+proyecto). `ThreatBackdrop` sigue fijando el color exactamente igual que antes, con la MISMA
+clase `text-pixel-*` de `threatTintClassFor` — `SpiderSilhouette` no sabe qué color es, sólo
+hereda `currentColor`. Cero sistema de tinte paralelo.
+
+### 11.2 `WebMotif` pasa de líneas SVG finas a un raster de bloques (Bresenham)
+
+Las telarañas de esquina no vienen de una foto — no había una referencia fotográfica de
+telaraña que downsamplear — pero tenían que dejar de leerse como un vector geométrico aparte
+y pasar a compartir el lenguaje "pixel-art" de la araña. Se mantiene SVG puro con
+`fill="currentColor"` (mismo mecanismo de tinte, sin PNG), pero los hilos radiales y los
+anillos poligonales ya no se trazan con `<line>`/`<polygon>` (líneas perfectamente rectas);
+se rasterizan con el algoritmo de línea de Bresenham a una grilla entera de 24×24 y se
+renderizan como bloques `<rect width="1" height="1">` — el mismo "escalonado" que un pixel
+artista dibuja a mano para una diagonal, calculado proceduralmente en vez de a mano.
+
+### 11.3 Glitch continuo en el fondo — ya no sólo en el burst de un veredicto
+
+Pedido textual: *"El glitch debe estar en estos elementos que son de fondo (...) cuando sea
+clean los bordes se difumina de verde y así con las demás, también debe haber un glitch de
+parpadeo de píxeles como que fuera una página hackeada."* Dos clases nuevas en
+`styles/index.css`, ambas CONTINUAS (a diferencia de `fx-burst-*`, que sólo corren una vez al
+revelarse un veredicto `malicious`/`unknown`):
+
+- **`.fx-backdrop-glow`** — difuminado de borde: `filter: drop-shadow(... currentColor)`
+  animando sólo el radio del blur (3px↔6px / 7px↔11px, doble capa), 2.6s `ease-in-out`
+  infinito. Vive en el mismo nodo que ya tiene `tintClass`, así que el `currentColor` que
+  toma el `drop-shadow` es EXACTAMENTE el mismo verde/ámbar/rojo/violeta/neutro que
+  `threatTintClassFor` ya decide para el resto del fondo — no hay una segunda fuente de color.
+- **`.fx-backdrop-hack`** — parpadeo de píxeles "pantalla hackeada": mismo vocabulario de
+  ruido que `.fx-grain`/`.fx-noise-burst` (`repeating-conic-gradient` + saltos de
+  `background-position`), pero CONTINUO y coloreado con `currentColor` (no el gris neutro de
+  `.fx-grain`, que es la capa CCTV y sigue siendo neutra a propósito). 2.2s,
+  `steps(1, jump-end)`, varias paradas de opacidad dentro del ciclo (mismo patrón que
+  `.fx-jitter-confused`) para que se sienta digital/entrecortado. Vive en un nodo HERMANO del
+  que tiene `opacity-10` (no un hijo): si viviera adentro, su propia opacidad se
+  multiplicaría con ese `0.1` y quedaría invisible por composición.
+
+Amplitud/timing revisados contra WCAG 2.3.1 (mismas reglas que rigen todo `styles/index.css`
+desde §8): ningún ciclo cae en la banda de parpadeo 3-60Hz (períodos de 2.2s/2.6s, muy por
+debajo), sólo se anima `filter`/`opacity`/`background-position` (nunca layout), y ambas
+clases se suman al bloque `@media (prefers-reduced-motion: reduce)` YA EXISTENTE (no uno
+nuevo) — `.fx-backdrop-glow` se congela en un drop-shadow de radio fijo (mismo criterio que
+`.fx-scanlines`/`.fx-grain`: textura estática en vez de desaparecer del todo) y
+`.fx-backdrop-hack` se apaga por completo (es puro ruido intermitente, no hay información que
+se pierda al quitarlo). Verificado con Playwright: `getComputedStyle(...).animationName`
+pasa de `fx-backdrop-glow-breathe`/`fx-backdrop-hack-flicker` a `none` con
+`prefers-reduced-motion: reduce` emulado, igual que el resto de la capa `fx-*`.
+
+### 11.4 Mascota del header — de 40px a 88px
+
+`App.tsx` usa `<Mascot size={88} />` en el header en vez de 40 — "el personaje principal", a
+diferencia del avatar chico repetido en cada burbuja de chat (`MascotMessage.tsx`, se queda
+en 40 porque se repite por mensaje y un avatar de chat grande rompería la lectura de la
+conversación). El `<div>` que envuelve `<Mascot>` en el header gana `shrink-0`: al ser un
+hijo de un `flex` junto al bloque de título/subtítulo (`min-w-0` + `truncate`), sin
+`shrink-0` el navegador podía comprimir el sprite por debajo de su tamaño declarado en
+viewports angostos en vez de truncar el texto de al lado. Verificado en 375px de ancho
+(`sm:` y por debajo) con Playwright: el header no se rompe, el título/subtítulo siguen
+truncando en vez de empujar el layout.

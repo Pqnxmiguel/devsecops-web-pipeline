@@ -42,10 +42,24 @@ const BURST_CLASS: Record<'malicious' | 'unknown', string> = {
  * así el bloque `@media (prefers-reduced-motion: reduce)` que ya las cubre
  * apaga también este efecto sin tener que tocar ese CSS.
  *
- * Misma disciplina de 3 nodos anidados que `Mascot.tsx` (comentario ahí
- * explica el porqué): dos clases con `animation` en el mismo nodo se
- * cancelarían entre sí, así que el jitter continuo (nodo externo) y la
- * ráfaga de un solo ciclo (nodo medio) no pueden compartir elemento.
+ * Misma disciplina de nodos anidados que `Mascot.tsx` (comentario ahí explica
+ * el porqué): dos clases con `animation` en el mismo nodo se cancelarían
+ * entre sí, así que el jitter continuo (nodo externo), la ráfaga de un solo
+ * ciclo (nodo medio) y los dos glitches CONTINUOS nuevos de abajo no pueden
+ * compartir elemento entre sí.
+ *
+ * Glitch continuo nuevo (ver docs/architecture/frontend-design.md §11, no
+ * sólo el burst de un cambio de veredicto):
+ *   - `.fx-backdrop-glow` (en el nodo de tinte): difuminado de borde vía
+ *     `filter: drop-shadow(... currentColor)` — hereda el MISMO tinte que ya
+ *     fija `tintClass`, cero color nuevo, sólo anima el radio del blur.
+ *   - `.fx-backdrop-hack` (nodo hermano aparte, para no heredar el
+ *     `opacity-10` del contenido y quedar invisible por multiplicación):
+ *     parpadeo de píxeles "pantalla hackeada", continuo, también teñido con
+ *     `currentColor` vía `tintClass`.
+ * Ambas clases viven en `styles/index.css` junto al resto del vocabulario
+ * `fx-*` y están cubiertas por el mismo bloque
+ * `@media (prefers-reduced-motion: reduce)`.
  */
 export function ThreatBackdrop({ scanStatus, level }: ThreatBackdropProps) {
   const state = mascotStateFor(scanStatus, level);
@@ -76,8 +90,8 @@ export function ThreatBackdrop({ scanStatus, level }: ThreatBackdropProps) {
       aria-hidden="true"
       className={`pointer-events-none fixed inset-0 -z-10 overflow-hidden ${continuousJitterClass}`}
     >
-      <div className={`h-full w-full ${burstClass}`}>
-        <div className={`h-full w-full opacity-10 transition-colors duration-500 ${tintClass}`}>
+      <div className={`relative h-full w-full ${burstClass}`}>
+        <div className={`h-full w-full opacity-10 transition-colors duration-500 fx-backdrop-glow ${tintClass}`}>
           {/* Telarañas en las 4 esquinas — el espacio libre que antes ocupaba
               el sidebar de historial. Centro posicionado fuera del viewport a
               propósito (ver spiderMotifs.tsx) para que sólo se vea el cuarto
@@ -88,9 +102,16 @@ export function ThreatBackdrop({ scanStatus, level }: ThreatBackdropProps) {
           <WebMotif className="absolute -bottom-16 -right-16 h-48 w-48 sm:h-64 sm:w-64" />
 
           {/* La araña: grande, detrás de la columna de chat, corrida hacia un
-              costado para no quedar pisada por las burbujas centradas. */}
-          <SpiderSilhouette className="absolute right-[3%] top-[36%] h-32 w-auto sm:h-48 md:right-[6%] md:h-64" />
+              costado para no quedar pisada por las burbujas centradas.
+              Cuadrada (la máscara PNG viene de una foto 980x980) — a
+              diferencia del viejo SVG (64x44) ya no hace falta `w-auto`. */}
+          <SpiderSilhouette className="absolute right-[3%] top-[36%] h-32 w-32 sm:h-48 sm:w-48 md:right-[6%] md:h-64 md:w-64" />
         </div>
+
+        {/* Parpadeo de píxeles "pantalla hackeada": nodo HERMANO del de
+            tinte, no hijo — si viviera dentro del `opacity-10` de arriba, su
+            propia opacidad se multiplicaría con esa y quedaría invisible. */}
+        <div aria-hidden="true" className={`pointer-events-none absolute inset-0 fx-backdrop-hack ${tintClass}`} />
       </div>
     </div>
   );

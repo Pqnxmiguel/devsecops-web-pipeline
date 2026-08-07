@@ -50,8 +50,15 @@ export function App() {
       <CameraChrome />
 
       <div className="fx-feed-jitter flex h-full min-h-0 flex-col">
+        {/* El personaje principal (a diferencia del avatar chico repetido en
+            cada burbuja de chat vía `MascotMessage.tsx`, que se queda en 40
+            porque se repite por mensaje): 88px para que realmente se
+            aprecie el sprite. `shrink-0` evita que el flex lo comprima en
+            mobile cuando el título/subtítulo de al lado son largos. */}
         <header className="flex items-center gap-3 border-b-2 border-pixel-ink2 px-4 py-3 sm:px-6">
-          <Mascot scanStatus={headerScanStatus} level={headerLevel} size={40} />
+          <div className="shrink-0">
+            <Mascot scanStatus={headerScanStatus} level={headerLevel} size={88} />
+          </div>
           <div className="min-w-0">
             <h1 className="font-pixel text-[10px] text-pixel-glass leading-relaxed sm:text-xs">IOC SCANNER</h1>
             <p className="font-mono-pixel text-base text-pixel-fog truncate">{STATE_LABEL[headerMascotState]}</p>
