@@ -33,6 +33,9 @@ npm-audit.json
 *.sqlite3
 *.db
 
+# Estado de cuota diaria persistido (backend/src/services/quota/quotaTracker.js)
+backend/data/
+
 # Editores / SO
 .DS_Store
 Thumbs.db

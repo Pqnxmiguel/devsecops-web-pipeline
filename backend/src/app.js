@@ -15,10 +15,12 @@ import rateLimit from 'express-rate-limit';
 import { config as defaultConfig } from './config/index.js';
 import { createSources } from './services/sources/index.js';
 import { createScanService } from './services/scanService.js';
+import { createQuotaTracker } from './services/quota/quotaTracker.js';
 import { createInMemoryHistoryRepository } from './models/historyRepository.js';
 import { createHealthController } from './controllers/healthController.js';
 import { createScanController } from './controllers/scanController.js';
 import { createHistoryController } from './controllers/historyController.js';
+import { createQuotaController } from './controllers/quotaController.js';
 import { createApiRouter } from './routes/index.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 
@@ -72,7 +74,16 @@ export function createApp(config = defaultConfig) {
   app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
   // --- Grafo de dependencias -------------------------------------------------
-  const sources = createSources(config);
+  // El tracker se construye siempre (mock o real): no hace I/O de disco hasta
+  // que alguno de sus metodos se invoca, y eso solo ocurre en la rama real de
+  // cada fuente y en el controller de cuota cuando `useMockSources` es false.
+  const quotaTracker = createQuotaTracker({
+    limits: {
+      abuseipdb: config.abuseipdbDailyLimit,
+      virustotal: config.virustotalDailyLimit,
+    },
+  });
+  const sources = createSources(config, { quotaTracker });
   const historyRepository = createInMemoryHistoryRepository({
     maxEntries: config.historyMaxEntries,
   });
@@ -89,6 +100,7 @@ export function createApp(config = defaultConfig) {
       healthController: createHealthController({ config, sources }),
       scanController: createScanController(scanService),
       historyController: createHistoryController(historyRepository),
+      quotaController: createQuotaController({ quotaTracker, config }),
     }),
   );
 

@@ -14,8 +14,15 @@ import { validateScanBody, validatePagination } from '../middleware/validateRequ
  * @param {ReturnType<import('../controllers/healthController.js').createHealthController>} deps.healthController
  * @param {ReturnType<import('../controllers/scanController.js').createScanController>} deps.scanController
  * @param {ReturnType<import('../controllers/historyController.js').createHistoryController>} deps.historyController
+ * @param {ReturnType<import('../controllers/quotaController.js').createQuotaController>} deps.quotaController
  */
-export function createApiRouter({ config, healthController, scanController, historyController }) {
+export function createApiRouter({
+  config,
+  healthController,
+  scanController,
+  historyController,
+  quotaController,
+}) {
   const router = Router();
 
   router.get('/health', healthController.getHealth);
@@ -25,6 +32,8 @@ export function createApiRouter({ config, healthController, scanController, hist
   router.post('/scan/domain', validateScanBody, scanController.scanDomain);
 
   router.get('/history', validatePagination(config), historyController.listHistory);
+
+  router.get('/quota', quotaController.getQuota);
 
   return router;
 }

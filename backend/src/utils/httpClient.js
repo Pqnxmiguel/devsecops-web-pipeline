@@ -21,11 +21,16 @@ export const DEFAULT_TIMEOUT_MS = 5000;
  * @param {Record<string,string>} [options.headers]
  * @param {'GET'|'POST'} [options.method]
  * @param {Record<string,string>} [options.form]  Cuerpo form-urlencoded (URLhaus).
+ * @param {(headers: Headers) => void} [options.onHeaders]  Callback opcional
+ *   invocado con el `Headers` de la respuesta, ANTES de intentar parsear el
+ *   cuerpo. Pensado para que una fuente puntual (AbuseIPDB) lea sus 3
+ *   cabeceras de rate limit sin que el contrato de las otras dos cambie de
+ *   forma: ningun otro call site necesita tocarlo.
  * @returns {Promise<unknown>} El cuerpo JSON ya parseado.
  */
 export async function fetchJson(
   url,
-  { source, timeoutMs = DEFAULT_TIMEOUT_MS, headers = {}, method = 'GET', form },
+  { source, timeoutMs = DEFAULT_TIMEOUT_MS, headers = {}, method = 'GET', form, onHeaders },
 ) {
   const requestHeaders = { accept: 'application/json', ...headers };
   let body;
@@ -54,6 +59,11 @@ export async function fetchJson(
       { source, kind: isTimeout ? 'timeout' : 'unavailable' },
     );
   }
+
+  // Antes de mirar el status: si el llamador quiere leer alguna cabecera
+  // puntual (rate limit, por ejemplo) la necesita incluso en una respuesta de
+  // error, para saber cuanto margen queda.
+  onHeaders?.(response.headers);
 
   if (response.status === 429) {
     throw new SourceError(`La fuente ${source} aplico rate limiting.`, {

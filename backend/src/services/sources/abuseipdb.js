@@ -120,17 +120,34 @@ export function normalizeAbuseipdb(raw) {
 }
 
 /**
+ * Lee las 3 cabeceras de rate limit de AbuseIPDB, si vinieron y son numericas.
+ * Nunca reenvia headers arbitrarios del proveedor: solo estos tres.
+ * @param {Headers} headers
+ * @returns {{limit: number, remaining: number, resetAt: string} | undefined}
+ */
+function readRateLimitHeaders(headers) {
+  const limit = Number(headers.get('x-ratelimit-limit'));
+  const remaining = Number(headers.get('x-ratelimit-remaining'));
+  const resetEpochSeconds = Number(headers.get('x-ratelimit-reset'));
+  if (![limit, remaining, resetEpochSeconds].every(Number.isFinite)) return undefined;
+  return { limit, remaining, resetAt: new Date(resetEpochSeconds * 1000).toISOString() };
+}
+
+/**
  * @param {object} options
  * @param {boolean} options.useMock
  * @param {string} [options.apiKey]
  * @param {number} [options.timeoutMs]
  * @param {typeof defaultFetchJson} [options.fetchJson]  Inyectable para tests.
+ * @param {ReturnType<typeof import('../quota/quotaTracker.js').createQuotaTracker>} [options.quotaTracker]
+ *   Solo se usa cuando `useMock` es false.
  */
 export function createAbuseipdbSource({
   useMock,
   apiKey,
   timeoutMs,
   fetchJson = defaultFetchJson,
+  quotaTracker,
 }) {
   return {
     id: SOURCE_ID,
@@ -139,18 +156,54 @@ export function createAbuseipdbSource({
       if (useMock) {
         return normalizeAbuseipdb(abuseipdbMockResponse(ioc));
       }
+
+      // Gating de cuota: si el tracker dice que no queda margen, se corta
+      // ANTES de tocar la red -- reusa el mismo `kind: 'rate_limit'` que ya
+      // maneja `httpClient.js` en un 429 real, asi `scanService.js` lo
+      // absorbe sin ningun cambio.
+      if (quotaTracker && !quotaTracker.canConsume(SOURCE_ID)) {
+        throw new SourceError(
+          `La fuente ${SOURCE_ID} alcanzo su cuota diaria; no se intento la llamada real.`,
+          { source: SOURCE_ID, kind: 'rate_limit' },
+        );
+      }
+
       const query = new URLSearchParams({
         ipAddress: ioc.value,
         maxAgeInDays: String(MAX_AGE_IN_DAYS),
       });
-      const raw = await fetchJson(`${ENDPOINT}?${query}`, {
-        source: SOURCE_ID,
-        timeoutMs,
-        // La API key viaja en cabecera, nunca en la query string: las URLs
-        // acaban en logs de proxy y de acceso.
-        headers: { Key: apiKey },
-      });
-      return normalizeAbuseipdb(raw);
+
+      let rateLimitHeaders;
+      try {
+        const raw = await fetchJson(`${ENDPOINT}?${query}`, {
+          source: SOURCE_ID,
+          timeoutMs,
+          // La API key viaja en cabecera, nunca en la query string: las URLs
+          // acaban en logs de proxy y de acceso.
+          headers: { Key: apiKey },
+          onHeaders: quotaTracker
+            ? (headers) => {
+                rateLimitHeaders = readRateLimitHeaders(headers);
+              }
+            : undefined,
+        });
+        // Contador propio primero; si vino el header (la verdad), lo
+        // sobreescribe a continuacion. El orden importa: reconcile corrige
+        // cualquier drift que el incremento optimista haya introducido.
+        quotaTracker?.recordUsage(SOURCE_ID);
+        if (quotaTracker && rateLimitHeaders) {
+          quotaTracker.reconcileFromHeaders(SOURCE_ID, rateLimitHeaders);
+        }
+        return normalizeAbuseipdb(raw);
+      } catch (error) {
+        // Caso defensivo: nuestro contador decia que habia margen pero el
+        // proveedor igual respondio 429. Se fuerza el agotamiento para no
+        // seguir gastando intentos reales el resto del dia.
+        if (quotaTracker && error instanceof SourceError && error.kind === 'rate_limit') {
+          quotaTracker.markExhausted(SOURCE_ID);
+        }
+        throw error;
+      }
     },
   };
 }

@@ -29,6 +29,14 @@ describe('loadConfig defaults', () => {
     expect(loadConfig({}).version).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
+  it('defaults the AbuseIPDB daily quota to 1000', () => {
+    expect(loadConfig({}).abuseipdbDailyLimit).toBe(1000);
+  });
+
+  it('defaults the VirusTotal daily quota to 500', () => {
+    expect(loadConfig({}).virustotalDailyLimit).toBe(500);
+  });
+
   it('returns a frozen object so nothing can mutate config at runtime', () => {
     expect(Object.isFrozen(loadConfig({}))).toBe(true);
   });
@@ -59,6 +67,18 @@ describe('loadConfig parsing', () => {
 
   it('rejects a wildcard CORS origin', () => {
     expect(() => loadConfig({ CORS_ORIGINS: '*' })).toThrow(ConfigurationError);
+  });
+
+  it('reads a custom AbuseIPDB daily quota', () => {
+    expect(loadConfig({ ABUSEIPDB_DAILY_LIMIT: '250' }).abuseipdbDailyLimit).toBe(250);
+  });
+
+  it('reads a custom VirusTotal daily quota', () => {
+    expect(loadConfig({ VIRUSTOTAL_DAILY_LIMIT: '50' }).virustotalDailyLimit).toBe(50);
+  });
+
+  it('rejects a non-numeric daily quota', () => {
+    expect(() => loadConfig({ ABUSEIPDB_DAILY_LIMIT: 'muchos' })).toThrow(ConfigurationError);
   });
 });
 
