@@ -67,6 +67,31 @@ export interface HealthStatus {
   timestamp: string;
 }
 
+/**
+ * Estado de cuota diaria gratuita de UNA fuente externa. `limit`/`remaining`/
+ * `resetAt` son `null` si y sólo si `unlimited === true` (caso `urlhaus`
+ * hoy) — mismo criterio de "null tiene un único significado" que
+ * `Verdict.score`.
+ */
+export interface QuotaSourceStatus {
+  source: SourceId | string;
+  limit: number | null;
+  used: number;
+  remaining: number | null;
+  resetAt: string | null;
+  unlimited: boolean;
+}
+
+/**
+ * `GET /api/quota`. En `mockMode: true` la forma es idéntica pero los
+ * números no representan cuota real — la UI debe dejarlo explícito, nunca
+ * ocultar el endpoint en mock.
+ */
+export interface QuotaStatus {
+  mockMode: boolean;
+  sources: QuotaSourceStatus[];
+}
+
 export interface ApiErrorBody {
   error: {
     code: string;

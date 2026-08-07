@@ -1,12 +1,7 @@
 import type { DegradedReason, SourceReport } from '../../lib/types';
 import { enrichedDetailRows } from '../../lib/verdictPresentation';
 import { VerdictBadge } from './VerdictBadge';
-
-const SOURCE_LABEL: Record<string, string> = {
-  abuseipdb: 'AbuseIPDB',
-  virustotal: 'VirusTotal',
-  urlhaus: 'URLhaus',
-};
+import { SOURCE_LABEL } from './sourceLabels';
 
 const REASON_LABEL: Record<DegradedReason, string> = {
   timeout: 'La fuente no respondió a tiempo (timeout).',

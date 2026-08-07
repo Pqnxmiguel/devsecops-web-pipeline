@@ -5,6 +5,7 @@ import { UserMessage } from './UserMessage';
 import { TypingBubble } from './TypingBubble';
 import { VerdictMessage } from './VerdictMessage';
 import { ErrorMessage } from './ErrorMessage';
+import { QuotaMessage } from './QuotaMessage';
 import { assertUnreachable } from '../../lib/types';
 
 /**
@@ -22,11 +23,13 @@ function renderMessage(message: ChatMessage) {
     case 'text':
       return <MascotTextMessage text={message.text} />;
     case 'typing':
-      return <TypingBubble />;
+      return <TypingBubble label={message.label} />;
     case 'verdict':
-      return <VerdictMessage scan={message.scan} />;
+      return <VerdictMessage scan={message.scan} quota={message.quota} />;
     case 'error':
       return <ErrorMessage message={message.message} />;
+    case 'quota':
+      return <QuotaMessage quota={message.quota} />;
     default:
       return assertUnreachable(message);
   }

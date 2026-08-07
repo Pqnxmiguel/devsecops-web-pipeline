@@ -4,7 +4,7 @@
  * AbuseIPDB, VirusTotal ni URLhaus directamente, y ninguna API key vive en
  * este bundle. Ver docs/architecture/frontend-design.md §7.
  */
-import type { ApiErrorBody, HealthStatus, HistoryPage, IocType, Scan } from './types';
+import type { ApiErrorBody, HealthStatus, HistoryPage, IocType, QuotaStatus, Scan } from './types';
 import { ApiError } from './types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -28,6 +28,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function getHealth(): Promise<HealthStatus> {
   return request<HealthStatus>('/api/health');
+}
+
+/** GET /api/quota — cuánto queda de la cuota diaria gratuita de cada fuente externa. */
+export function getQuota(): Promise<QuotaStatus> {
+  return request<QuotaStatus>('/api/quota');
 }
 
 /** POST /api/scan/{type} — el backend valida y normaliza; el cliente sólo envía el valor crudo. */

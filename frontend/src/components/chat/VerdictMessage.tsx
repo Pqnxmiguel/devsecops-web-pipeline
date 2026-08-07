@@ -3,7 +3,8 @@ import { VerdictBadge } from '../scan/VerdictBadge';
 import { SourceReportCard } from '../scan/SourceReportCard';
 import { MascotMessage } from './MascotMessage';
 import { confidenceLabel, narrativeIntroFor } from '../../lib/verdictPresentation';
-import type { Scan, VerdictLevel } from '../../lib/types';
+import { quotaCompactSummary } from '../../lib/quotaPresentation';
+import type { QuotaStatus, Scan, VerdictLevel } from '../../lib/types';
 import { assertUnreachable } from '../../lib/types';
 
 /**
@@ -34,7 +35,7 @@ function thematicGlitchFor(level: VerdictLevel): string {
  * abre con una frase en primera persona (`narrativeIntroFor`) para que se
  * lea como que el personaje está explicando el resultado.
  */
-export function VerdictMessage({ scan }: { scan: Scan }) {
+export function VerdictMessage({ scan, quota }: { scan: Scan; quota?: QuotaStatus }) {
   const level = scan.verdict.level;
   const glitch = `fx-burst-message ${thematicGlitchFor(level)}`.trim();
 
@@ -72,6 +73,16 @@ export function VerdictMessage({ scan }: { scan: Scan }) {
               ))}
             </div>
           </div>
+        ) : null}
+
+        {/* Sólo tiene sentido para un scan real: en modo simulado no hay
+            cuota que reportar (ver useConversation.ts, que sólo pide
+            /api/quota cuando scan.mock === false). Chequeamos también
+            quota.mockMode por si el estado global quedara inconsistente. */}
+        {!scan.mock && quota && !quota.mockMode ? (
+          <p className="font-mono-pixel text-sm text-pixel-fog border-t border-pixel-ink2 pt-2">
+            Cuota restante hoy: {quotaCompactSummary(quota.sources)}
+          </p>
         ) : null}
       </div>
     </MascotMessage>
