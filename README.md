@@ -79,6 +79,7 @@ El mapa de qué escáner detecta cada vulnerabilidad —y cuáles **no detecta n
 | `GET` | `/api/history` | Historial de consultas (en memoria) |
 | `GET` | `/api/quota` | Cuota diaria restante por fuente (ver abajo) |
 | `GET` | `/api/health` | Health check |
+| `POST` | `/api/diagnose/dns` | ⚠️ Resolución DNS — **contiene `VULN-01` (CWE-78, RCE)**, ver [`docs/vulnerabilities/VULN-01.md`](docs/vulnerabilities/VULN-01.md) |
 
 Las fuentes externas corren en **modo mock por defecto** (`USE_MOCK_SOURCES=true`): el
 trabajo de SAST es estático y no debe depender de rate limits de APIs de terceros. En modo

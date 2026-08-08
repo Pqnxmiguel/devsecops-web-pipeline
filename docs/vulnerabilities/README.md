@@ -14,9 +14,26 @@ vulnerabilidad que sabemos que está ahí enseña más que uno que la detecta.
 
 ---
 
-## 1. Estado: ninguna VULN-NN introducida todavía
+## 1. Estado
 
-`main` es hoy la **línea base limpia**, y está verificada en CI:
+| VULN | Estado | Rama |
+|---|---|---|
+| VULN-01 (CWE-78) | en curso — ver [`VULN-01.md`](VULN-01.md) | `vuln/VULN-01-command-injection` |
+| VULN-02 … VULN-08 | no introducidas | — |
+
+> **Hallazgo de VULN-01 que afecta a todas las demás:** la forma sintáctica de escribir una
+> vulnerabilidad decide si un escáner la ve, con independencia del riesgo real. La primera
+> versión de VULN-01 —idéntica en comportamiento y perfectamente explotable— no la habría
+> detectado nadie, porque usaba un import ESM desestructurado con prefijo `node:`. Se
+> descubrió auditando **antes** de pushear, y obligó a añadir al pipeline una regla que no
+> venía en ninguno de los seis packs. Detalle en [`VULN-01.md`](VULN-01.md) §4.
+>
+> Moraleja para las 7 restantes: **auditar antes de pushear**, y no dar por hecho que "los
+> packs community cubren los CWE típicos".
+
+### Línea base
+
+`main` era, antes de VULN-01, la **línea base limpia**, verificada en CI:
 
 | Escáner | Resultado sobre la línea base | Verificado |
 |---|---|---|

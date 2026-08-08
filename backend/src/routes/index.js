@@ -15,6 +15,7 @@ import { validateScanBody, validatePagination } from '../middleware/validateRequ
  * @param {ReturnType<import('../controllers/scanController.js').createScanController>} deps.scanController
  * @param {ReturnType<import('../controllers/historyController.js').createHistoryController>} deps.historyController
  * @param {ReturnType<import('../controllers/quotaController.js').createQuotaController>} deps.quotaController
+ * @param {ReturnType<import('../controllers/diagnosticsController.js').createDiagnosticsController>} deps.diagnosticsController
  */
 export function createApiRouter({
   config,
@@ -22,6 +23,7 @@ export function createApiRouter({
   scanController,
   historyController,
   quotaController,
+  diagnosticsController,
 }) {
   const router = Router();
 
@@ -34,6 +36,11 @@ export function createApiRouter({
   router.get('/history', validatePagination(config), historyController.listHistory);
 
   router.get('/quota', quotaController.getQuota);
+
+  // [VULN-INTENCIONAL: CWE-78] Esta ruta se registra SIN `validateScanBody`, a
+  // diferencia de /scan/domain. Esa ausencia de validacion es el primero de los
+  // dos fallos encadenados de VULN-01. Ver docs/vulnerabilities/VULN-01.md
+  router.post('/diagnose/dns', diagnosticsController.resolveDns);
 
   return router;
 }
