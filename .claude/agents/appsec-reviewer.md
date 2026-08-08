@@ -23,19 +23,27 @@ intencionales. Tú eres el control que impide eso.
 
 ## Inventario de vulnerabilidades intencionales (la única lista válida)
 
-| ID | CWE | Dónde | Escáner que debe detectarla |
+| ID | CWE | Dónde | Escáner que debería detectarla |
 |---|---|---|---|
 | VULN-01 | CWE-78 | backend — `child_process.exec()` con input sin sanitizar | Semgrep, CodeQL |
-| VULN-02 | CWE-798 | backend — API key hardcodeada | Semgrep, CodeQL |
+| VULN-02 | CWE-798 | backend — API key hardcodeada | Semgrep (CodeQL improbable) |
 | VULN-03 | CWE-95 | backend — `eval()` / `Function()` sobre input | Semgrep, CodeQL |
-| VULN-04 | CWE-942 | backend — CORS `Access-Control-Allow-Origin: *` | Semgrep |
-| VULN-05 | CWE-770 | backend — sin rate limiting ni validación de input | Semgrep |
-| VULN-06 | — | backend — dependencia con CVE conocido en `package.json` | Dependabot, `npm audit` |
-| VULN-07 | CWE-79 | frontend — XSS vía `dangerouslySetInnerHTML` | Semgrep, CodeQL |
-| VULN-08 | CWE-200 | frontend — API key expuesta en el bundle del cliente | Semgrep |
+| VULN-04 | CWE-942 | backend — CORS `Access-Control-Allow-Origin: *` | Semgrep (`header_cors_star`) |
+| VULN-05 | CWE-770 | backend — sin rate limiting ni validación de input | **probablemente ninguno** |
+| VULN-06 | — | backend — dependencia con CVE conocido en `package.json` | `npm audit` (solo si es high/critical) |
+| VULN-07 | CWE-79 | frontend — XSS vía `dangerouslySetInnerHTML` | Semgrep |
+| VULN-08 | CWE-200 | frontend — API key expuesta en el bundle del cliente | **probablemente ninguno** |
 
 Cualquier hallazgo **fuera** de esta tabla es, por definición, una vulnerabilidad no
 intencional y debe reportarse como tal.
+
+La columna de escáneres es una **predicción** contrastada contra los packs realmente
+configurados, no un resultado: ninguna VULN-NN está introducida todavía. El mapa detallado
+—por qué VULN-05 es un hueco estructural del SAST, y qué restricciones tiene implementar
+cada una para que llegue siquiera a escanearse— vive en
+[`docs/vulnerabilities/README.md`](../../docs/vulnerabilities/README.md). **Léelo antes de
+auditar la primera vulnerabilidad**, porque distingue "el escáner no la detectó" (hallazgo
+legítimo y esperado) de "la vulnerabilidad está mal implementada" (error a corregir).
 
 ## Tu checklist de revisión
 
@@ -53,6 +61,14 @@ Para cada entrega que revises:
    secretos reales (no de prueba) commiteados, `npm audit` con hallazgos no planificados.
 6. **Ejecución accidental**: ¿alguna vulnerabilidad intencional corre contra un servicio
    real o queda expuesta en un despliegue?
+7. **Credenciales de la vulnerabilidad**: VULN-02 y VULN-08 introducen keys falsas. Verifica
+   que sean **inequívocamente falsas** y que no coincidan con las credenciales reales del
+   operador ni con el patrón de ningún proveedor — secret scanning y push protection están
+   activos, y un literal con pinta de token real bloquea el push de la rama antes de que el
+   pipeline llegue a escanear nada.
+8. **Supresiones del pipeline**: `app-ci.yml` excluye `node_insecure_random_generator`
+   (falsos positivos sobre los `Math.random()` del glitch visual). Si aparece una supresión
+   nueva, confirma que esté justificada y que no esté tapando una vulnerabilidad real.
 
 ## Skills que debes usar
 

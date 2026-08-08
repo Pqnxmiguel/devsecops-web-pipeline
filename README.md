@@ -6,8 +6,7 @@ una identidad visual pixel art / retro.
 
 Su propósito real es servir como **superficie de código para un pipeline de AppSec**:
 código JavaScript/TypeScript con vulnerabilidades intencionales y documentadas, sobre el
-que se validan escáneres **SAST** (CodeQL, Semgrep) y **SCA** (Dependabot, npm audit) en
-GitHub Actions.
+que se validan escáneres **SAST** (CodeQL, Semgrep) y **SCA** (npm audit) en GitHub Actions.
 
 > **Proyecto relacionado:** este repo es la contraparte de **aplicación** de una iniciativa
 > DevSecOps de dos frentes. La contraparte de **infraestructura (IaC)** vive en
@@ -25,6 +24,12 @@ No uses este código en producción. Contiene **8 vulnerabilidades intencionales
 
 Cualquier vulnerabilidad fuera de ese inventario es un bug real.
 
+**Estado actual:** ninguna `VULN-NN` está introducida todavía. `main` es hoy la línea base
+limpia (backend + frontend completos, sin vulnerabilidades) **con el pipeline ya operativo y
+en verde** — el requisito para que cada vulnerabilidad que se introduzca después sea
+distinguible del ruido. Se abrirán una por una, en ramas dedicadas. Ver
+[`handoff.md`](handoff.md) para qué falta y en qué orden.
+
 ---
 
 ## Arquitectura
@@ -40,29 +45,49 @@ devsecops-web-pipeline/
 
 ## Escáneres
 
-| Herramienta | Tipo | Cubre | Costo |
-|---|---|---|---|
-| CodeQL | SAST | Backend + frontend (JS/TS) | Gratis en repos públicos |
-| Semgrep | SAST | Reglas community Node/Express y React | Gratis |
-| Dependabot | SCA | Dependencias con CVEs conocidos | Gratis |
-| npm audit | SCA | Complementario, corre en el pipeline | Gratis |
+El pipeline [`app-ci.yml`](.github/workflows/app-ci.yml) está **operativo y validado contra
+la línea base limpia**:
 
-Los hallazgos se suben como SARIF a **Code Scanning** (anotación línea por línea en el PR),
-bloquean el merge, y notifican al canal `#appsec-alerts` de Discord vía el secret
-`DISCORD_WEBHOOK_URL_APPSEC`.
+| Herramienta | Tipo | Cubre | Bloquea con | Línea base |
+|---|---|---|---|---|
+| CodeQL | SAST | Backend + frontend (JS/TS), `security-extended` | ≥1 hallazgo | ✅ 0 hallazgos |
+| Semgrep | SAST | 6 packs community (222 reglas) | ≥1 `error`/`warning` | ✅ 0 bloqueantes |
+| npm audit | SCA | `backend/` y `frontend/` | ≥1 `high`/`critical` | ✅ 0 / 0 |
+
+Todo corre en el tier gratuito de repos públicos (**costo $0**). Los hallazgos se suben como
+SARIF a **Code Scanning** —anotación línea por línea sobre el diff del PR— y se notifican a
+Discord vía el secret `BOTDEVSECWEB`.
+
+El workflow dispara en **cualquier rama**, no solo en PRs: una rama con una vulnerabilidad
+produce escaneo y reporte a Discord sin necesidad de abrir el PR.
+
+**Sobre Dependabot:** no hay `dependabot.yml` a propósito. Ese archivo configura *version
+updates* (PRs semanales que suben dependencias) y pelearía contra `VULN-06`, que existe
+justamente para sostener una dependencia vulnerable. La detección de dependencias con CVE
+la cubre `npm audit` dentro del pipeline, que además bloquea.
+
+El mapa de qué escáner detecta cada vulnerabilidad —y cuáles **no detecta nadie**— está en
+[`docs/vulnerabilities/README.md`](docs/vulnerabilities/README.md).
 
 ## Endpoints
 
 | Método | Ruta | Función |
 |---|---|---|
 | `POST` | `/api/scan/ip` | Reputación de una IP (AbuseIPDB) |
-| `POST` | `/api/scan/hash` | Hash MD5/SHA256 contra bases de IOCs (VirusTotal) |
+| `POST` | `/api/scan/hash` | Hash MD5/SHA1/SHA256 contra bases de IOCs (VirusTotal) |
 | `POST` | `/api/scan/domain` | Dominio contra listas de bloqueo (URLhaus) |
-| `GET` | `/api/history` | Historial de consultas |
+| `GET` | `/api/history` | Historial de consultas (en memoria) |
+| `GET` | `/api/quota` | Cuota diaria restante por fuente (ver abajo) |
 | `GET` | `/api/health` | Health check |
 
 Las fuentes externas corren en **modo mock por defecto** (`USE_MOCK_SOURCES=true`): el
-trabajo de SAST es estático y no debe depender de rate limits de APIs de terceros.
+trabajo de SAST es estático y no debe depender de rate limits de APIs de terceros. En modo
+real (`USE_MOCK_SOURCES=false`, con API keys propias en `backend/.env`), un tracker de
+cuota diaria por fuente evita superar el límite gratuito de cada proveedor —
+AbuseIPDB (1000/día, reconciliado con sus headers reales), VirusTotal (500/día, contador
+propio) y URLhaus (sin límite, requiere `URLHAUS_AUTH_KEY` desde la política "Community
+First" de abuse.ch). El estado se puede consultar en `GET /api/quota` o preguntándole al
+personaje directo en el chat ("cuántas consultas me quedan").
 
 ## Construido con agentes
 
