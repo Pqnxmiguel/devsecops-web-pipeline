@@ -1,0 +1,554 @@
+name: App CI (AppSec)
+
+# Se dispara en CUALQUIER rama para que introducir una VULN-NN en su propia rama
+# ya produzca escaneo + reporte a Discord antes incluso de abrir el PR, y en los PR
+# contra main para que los hallazgos queden anotados linea por linea sobre el diff.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Permiso minimo a nivel de workflow: solo leer el codigo. `security-events: write`
+# se concede por job, unicamente a los dos que suben SARIF a Code Scanning.
+permissions:
+  contents: read
+
+# push y pull_request quedan en grupos distintos a proposito: si compartieran grupo,
+# el run del PR cancelaria al del push (o al reves) y una de las dos vistas quedaria vacia.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+  SEMGREP_VERSION: '1.172.0'
+
+jobs:
+  # ============================================================
+  # JOB 1: Tests y build (backend + frontend)
+  # ============================================================
+  build-test:
+    name: Tests y build (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [backend, frontend]
+
+    defaults:
+      run:
+        working-directory: ${{ matrix.package }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Lint (solo frontend)
+        if: matrix.package == 'frontend'
+        run: npm run lint
+
+      - name: Tests
+        run: npm test
+
+      - name: Build (solo frontend)
+        if: matrix.package == 'frontend'
+        run: npm run build
+
+  # ============================================================
+  # JOB 2: SAST - CodeQL (nativo de GitHub, JS/TS)
+  # ============================================================
+  sast-codeql:
+    name: SAST - CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Inicializar CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          # JS/TS no necesita compilarse para analizarse.
+          build-mode: none
+          # security-extended agrega consultas de seguridad de menor precision que
+          # el set por defecto: aqui interesa maximizar deteccion, no minimizar ruido.
+          queries: security-extended
+          # `paths` es una lista BLANCA: solo se analiza codigo de la app. Sin esto
+          # se escanean tambien los 247 archivos versionados bajo `.claude/` (agentes
+          # y skills), que incluyen cientos de credenciales de ejemplo en su
+          # documentacion y ensuciarian la linea base con hallazgos que no son codigo
+          # de este proyecto.
+          config: |
+            paths:
+              - backend
+              - frontend
+            paths-ignore:
+              - '**/node_modules'
+              - '**/dist'
+              - '**/coverage'
+              - '**/*.test.js'
+              - '**/*.test.ts'
+              - '**/*.test.tsx'
+
+      - name: Analizar con CodeQL
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:javascript-typescript'
+          # Ademas de subirlo a Code Scanning, deja el SARIF en disco para poder
+          # contar hallazgos y resumirlos en la notificacion de Discord.
+          output: codeql-results
+          upload: always
+
+      - name: Normalizar SARIF de CodeQL
+        if: always()
+        run: |
+          # analyze@v3 nombra el archivo segun el lenguaje interno (javascript.sarif),
+          # que no coincide siempre con el id que se le pasa. Se resuelve con glob.
+          FOUND=$(ls codeql-results/*.sarif 2>/dev/null | head -1 || true)
+          if [ -n "$FOUND" ]; then
+            cp "$FOUND" codeql-results.sarif
+          else
+            echo '{"runs":[{"results":[]}]}' > codeql-results.sarif
+          fi
+
+      - name: Guardar SARIF como artifact (para el resumen de Discord)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-sarif
+          path: codeql-results.sarif
+          retention-days: 5
+
+      - name: Contar hallazgos de CodeQL
+        id: count
+        if: always()
+        run: |
+          ISSUES=$(jq '[.runs[].results[]?] | length' codeql-results.sarif)
+          echo "CodeQL encontro $ISSUES hallazgos"
+          echo "issues=$ISSUES" >> "$GITHUB_OUTPUT"
+
+      - name: Fallar si CodeQL encontro hallazgos
+        # Bloquea con cualquier nivel, a diferencia de Semgrep (que ignora `note`):
+        # aqui TODO resultado viene de una consulta de seguridad, asi que no hay
+        # categoria informativa que descartar.
+        if: always() && steps.count.outputs.issues != '' && steps.count.outputs.issues != '0'
+        run: |
+          echo "❌ CodeQL detecto ${{ steps.count.outputs.issues }} vulnerabilidades."
+          exit 1
+
+  # ============================================================
+  # JOB 3: SAST - Semgrep (reglas community JS/Node/React)
+  # ============================================================
+  sast-semgrep:
+    name: SAST - Semgrep
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Se instala con pipx (preinstalado en los runners) en vez de correr el job
+      # dentro del contenedor de Semgrep: asi las actions de upload-sarif/artifact,
+      # que necesitan Node, siguen funcionando en el mismo job.
+      - name: Instalar Semgrep
+        run: |
+          # Version pineada: sin pin, una release nueva de Semgrep puede cambiar
+          # reglas o umbrales y romper el pipeline sin haber tocado el codigo.
+          pipx install semgrep==${{ env.SEMGREP_VERSION }}
+          semgrep --version
+
+      - name: Ejecutar Semgrep
+        id: semgrep
+        run: |
+          # Packs elegidos por cobertura de las VULN-NN previstas:
+          #   p/javascript, p/nodejs  -> child_process.exec (CWE-78), eval (CWE-95).
+          #                              p/javascript ya incluye las reglas
+          #                              javascript.express.security.* (no existe un
+          #                              pack p/express: devuelve HTTP 404).
+          #   p/nodejsscan            -> header_cors_star, la unica regla que detecta
+          #                              Access-Control-Allow-Origin: * (CWE-942).
+          #   p/react, p/typescript   -> dangerouslySetInnerHTML (CWE-79)
+          #   p/secrets               -> API keys hardcodeadas (CWE-798 / CWE-200)
+          #
+          # Supresion unica, justificada: node_insecure_random_generator marca los
+          # Math.random() de useAmbientGlitch.ts y useCorruptedClock.ts, que generan
+          # el parpadeo visual de la estetica CCTV. No hay uso criptografico de
+          # aleatoriedad en toda la app, y ninguna VULN-NN del inventario depende de
+          # ella. Se excluye la regla desde el pipeline y no con comentarios
+          # `nosemgrep` en el codigo para no ensuciar el frontend con ruido de
+          # escaner: este workflow no toca backend/ ni frontend/.
+          set +e
+          semgrep scan \
+            --config=p/javascript \
+            --config=p/typescript \
+            --config=p/react \
+            --config=p/nodejs \
+            --config=p/nodejsscan \
+            --config=p/secrets \
+            --sarif --output=semgrep-results.sarif \
+            --exclude=node_modules \
+            --exclude=dist \
+            --exclude=coverage \
+            --exclude-rule=ajinabraham.njsscan.crypto.crypto_node.node_insecure_random_generator \
+            --metrics=off \
+            backend frontend
+          RC=$?
+          set -e
+
+          # Semgrep sale con 1 cuando encuentra hallazgos: eso no es un fallo del job,
+          # el gate lo decide el conteo mas abajo. Pero si NO dejo SARIF, si crasheo
+          # de verdad (red, pack invalido) y hay que fallar en vez de reportar 0.
+          if [ ! -s semgrep-results.sarif ]; then
+            echo "❌ Semgrep no genero SARIF (exit $RC): fallo real de ejecucion."
+            exit 1
+          fi
+
+          # Fallo PARCIAL: si un pack no se pudo resolver (registry caido, pack
+          # renombrado), Semgrep sigue con los demas y escribe un SARIF valido — el
+          # job pasaria en verde habiendo escaneado menos reglas de las que cree.
+          # Es el mismo falso negativo silencioso que se cierra en el job de npm audit.
+          ERRORS=$(jq '[.runs[].invocations[]?.toolExecutionNotifications[]? | select(.level == "error")] | length' semgrep-results.sarif)
+          if [ "$ERRORS" != "0" ]; then
+            echo "❌ Semgrep reporto $ERRORS errores de ejecucion: el escaneo esta incompleto."
+            jq -r '.runs[].invocations[]?.toolExecutionNotifications[]? | select(.level == "error") | .message.text' semgrep-results.sarif
+            exit 1
+          fi
+          echo "Semgrep termino con exit $RC y genero SARIF completo."
+
+      - name: Upload Semgrep SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep-results.sarif
+          category: semgrep
+
+      - name: Guardar SARIF como artifact (para el resumen de Discord)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-sarif
+          path: semgrep-results.sarif
+          retention-days: 5
+
+      - name: Contar hallazgos de Semgrep
+        id: count
+        if: always()
+        run: |
+          TOTAL=$(jq '[.runs[].results[]?] | length' semgrep-results.sarif)
+          # Solo error/warning bloquean; los "note" (INFO) son informativos y no
+          # deberian tumbar el pipeline por ruido de reglas de estilo.
+          #
+          # OJO con el nivel: Semgrep NO escribe `level` en cada resultado, lo declara
+          # una sola vez por regla en tool.driver.rules[].defaultConfiguration.level
+          # (la spec SARIF dice que un resultado sin `level` hereda el de su regla).
+          # Leer `.level` directo del resultado da null SIEMPRE, y el gate contaria 0
+          # incluso con hallazgos ERROR: Semgrep no bloquearia nunca nada. Hay que
+          # resolverlo contra la metadata. Si no se puede resolver se asume "warning",
+          # que es el default seguro para un gate (ante la duda, bloquea).
+          BLOCKING=$(jq '
+            [ .runs[] as $r
+              | (INDEX($r.tool.driver.rules[]?; .id)) as $rules
+              | $r.results[]?
+              | (.level // $rules[.ruleId].defaultConfiguration.level // "warning")
+              | select(. == "error" or . == "warning")
+            ] | length' semgrep-results.sarif)
+          echo "Semgrep encontro $TOTAL hallazgos ($BLOCKING bloqueantes)"
+          echo "issues=$TOTAL" >> "$GITHUB_OUTPUT"
+          echo "blocking=$BLOCKING" >> "$GITHUB_OUTPUT"
+
+      - name: Fallar si Semgrep encontro hallazgos bloqueantes
+        if: always() && steps.count.outputs.blocking != '' && steps.count.outputs.blocking != '0'
+        run: |
+          echo "❌ Semgrep detecto ${{ steps.count.outputs.blocking }} hallazgos de severidad error/warning."
+          exit 1
+
+  # ============================================================
+  # JOB 4: SCA - npm audit (backend + frontend)
+  # ============================================================
+  sca-npm-audit:
+    name: SCA - npm audit (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [backend, frontend]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Ejecutar npm audit
+        id: audit
+        working-directory: ${{ matrix.package }}
+        run: |
+          # npm audit sale con codigo !=0 cuando hay hallazgos; el gate lo decide
+          # el conteo de abajo, no el exit code de npm.
+          npm audit --json > audit.json || true
+
+          # Si npm fallo de verdad (red, lockfile roto) escribe un JSON de error sin
+          # .metadata, y `// 0` lo leeria como "cero vulnerabilidades": un falso
+          # negativo silencioso. Se verifica explicitamente antes de contar nada.
+          if ! jq -e '.metadata.vulnerabilities' audit.json > /dev/null 2>&1; then
+            echo "❌ npm audit no devolvio un reporte valido en ${{ matrix.package }}:"
+            head -c 2000 audit.json
+            exit 1
+          fi
+
+          CRIT=$(jq '.metadata.vulnerabilities.critical // 0' audit.json)
+          HIGH=$(jq '.metadata.vulnerabilities.high // 0' audit.json)
+          MOD=$(jq '.metadata.vulnerabilities.moderate // 0' audit.json)
+          LOW=$(jq '.metadata.vulnerabilities.low // 0' audit.json)
+          BLOCKING=$((CRIT + HIGH))
+
+          echo "${{ matrix.package }}: $CRIT criticas, $HIGH altas, $MOD moderadas, $LOW bajas"
+          echo "blocking=$BLOCKING" >> "$GITHUB_OUTPUT"
+
+          # Resumen legible para el mensaje de Discord.
+          {
+            if [ "$((CRIT + HIGH + MOD + LOW))" = "0" ]; then
+              echo "**${{ matrix.package }}**: sin vulnerabilidades ✅"
+            else
+              echo "**${{ matrix.package }}**: 🔴 $CRIT criticas / 🟠 $HIGH altas / 🟡 $MOD moderadas / 🟢 $LOW bajas"
+              # `via[0]` es un objeto (advisory directo) o un string (dependencia
+              # transitiva que arrastra el problema); hay que distinguirlos o jq revienta.
+              jq -r '
+                [.vulnerabilities // {} | to_entries[]
+                  | select(.value.severity == "critical" or .value.severity == "high")
+                  | (.value.via[0] // null) as $v
+                  | (if ($v | type) == "object" then ($v.title // "ver advisory")
+                     elif ($v | type) == "string" then "via " + $v
+                     else "ver advisory" end) as $why
+                  | "  - `\(.key)` (\(.value.severity)): \($why)"
+                ] | .[0:8] | join("\n")
+              ' audit.json
+            fi
+          } > "../npm-audit-${{ matrix.package }}.txt"
+          cat "../npm-audit-${{ matrix.package }}.txt"
+
+      - name: Guardar resumen como artifact (para el resumen de Discord)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-${{ matrix.package }}
+          path: npm-audit-${{ matrix.package }}.txt
+          retention-days: 5
+
+      - name: Fallar si hay vulnerabilidades altas o criticas
+        # `!= ''` evita un mensaje sin sentido cuando el paso anterior ya fallo por
+        # un reporte invalido y nunca llego a publicar el output.
+        if: always() && steps.audit.outputs.blocking != '' && steps.audit.outputs.blocking != '0'
+        run: |
+          echo "❌ npm audit detecto ${{ steps.audit.outputs.blocking }} vulnerabilidades altas/criticas en ${{ matrix.package }}."
+          exit 1
+
+  # ============================================================
+  # JOB 5: Notificacion a Discord (#appsec-alerts)
+  # ============================================================
+  notify-discord:
+    name: Notificar a Discord
+    runs-on: ubuntu-latest
+    needs: [build-test, sast-codeql, sast-semgrep, sca-npm-audit]
+    if: always() && github.event_name != 'pull_request'
+    permissions:
+      # No hace checkout: solo baja artifacts del propio run (necesita actions: read)
+      # y postea al webhook. No necesita leer el codigo ni escribir security-events.
+      actions: read
+    # Se omite en pull_request a proposito: el push del mismo commit a la rama ya
+    # disparo este job, y notificar en ambos eventos duplicaria cada mensaje.
+
+    steps:
+      - name: Descargar SARIF de CodeQL
+        if: always()
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: codeql-sarif
+
+      - name: Descargar SARIF de Semgrep
+        if: always()
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: semgrep-sarif
+
+      - name: Descargar resumen de npm audit (backend)
+        if: always()
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: npm-audit-backend
+
+      - name: Descargar resumen de npm audit (frontend)
+        if: always()
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: npm-audit-frontend
+
+      - name: Enviar notificacion
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.BOTDEVSECWEB }}
+          RESULT_TESTS: ${{ needs.build-test.result }}
+          RESULT_CODEQL: ${{ needs.sast-codeql.result }}
+          RESULT_SEMGREP: ${{ needs.sast-semgrep.result }}
+          RESULT_AUDIT: ${{ needs.sca-npm-audit.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SECURITY_URL: ${{ github.server_url }}/${{ github.repository }}/security/code-scanning
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "BOTDEVSECWEB no esta configurado, se omite la notificacion."
+            exit 0
+          fi
+
+          if [[ "$RESULT_TESTS $RESULT_CODEQL $RESULT_SEMGREP $RESULT_AUDIT" == *"failure"* ]]; then
+            COLOR=15158332
+            TITLE="🚨 AppSec: se detectaron hallazgos"
+          else
+            COLOR=3066993
+            TITLE="✅ AppSec: pipeline limpio - sin hallazgos"
+          fi
+
+          SHORT_SHA=$(echo "$SHA" | cut -c1-7)
+          # Se trunca con jq y no con `cut -c`, que corta por BYTE: los mensajes de
+          # commit de este repo llevan acentos y eñes, y partir un caracter UTF-8 a la
+          # mitad haria fallar el `jq --arg` de mas abajo con el payload entero.
+          # En workflow_dispatch no hay head_commit, de ahi el fallback.
+          SUBJECT=$(printf '%s' "${COMMIT_MSG:-(sin mensaje de commit)}" | jq -Rrs 'split("\n")[0] | if (. | length) > 120 then .[0:120] + "…" else . end')
+
+          DESCRIPTION="**Repo:** ${REPO}"$'\n'"**Rama:** \`${REF}\`"$'\n'"**Commit:** \`${SHORT_SHA}\` — ${SUBJECT}"$'\n'"**Autor:** ${ACTOR}"$'\n'"[Ver hallazgos en Code Scanning](${SECURITY_URL})"
+
+          # Arma una lista "- **regla** (nivel): archivo:linea" a partir de un SARIF.
+          # Se usa el campo "level" (error/warning/note) como aproximacion a la
+          # severidad, igual que en el pipeline hermano de IaC.
+          build_findings() {
+            local file="$1"
+            if [ ! -f "$file" ]; then
+              echo "(no se pudo leer el resultado)"
+              return
+            fi
+            local count
+            # Bajo `bash -e`, un jq que falle mataria el step entero y Discord no
+            # recibiria NADA — justo cuando algo salio mal. Se degrada a un aviso
+            # explicito: un SARIF ilegible no puede reportarse como "sin hallazgos",
+            # que seria mentir en verde.
+            if ! count=$(jq '[.runs[].results[]?] | length' "$file" 2>/dev/null); then
+              echo "⚠️ SARIF ilegible — revisar el run"
+              return
+            fi
+            if [ "$count" = "0" ]; then
+              echo "Sin hallazgos ✅"
+              return
+            fi
+            # El nivel se resuelve contra la metadata de la regla por la misma razon
+            # que en el gate de Semgrep: leer `.level` del resultado da null y el
+            # mensaje mostraria todo como "🟢 Bajo". CodeQL si lo trae por resultado,
+            # asi que el `.level //` de la izquierda gana y sirve para ambos SARIF.
+            jq -r '
+              [ .runs[] as $r
+                | (INDEX($r.tool.driver.rules[]?; .id)) as $rules
+                | $r.results[]? | . as $res
+                | ($res.level // $rules[$res.ruleId].defaultConfiguration.level // "warning") as $lvl
+                | (if $lvl == "error" then "🔴 Alto"
+                   elif $lvl == "warning" then "🟡 Medio"
+                   else "🟢 Bajo" end) as $sev
+                | (($res.ruleId // "regla") | split(".") | last) as $rule
+                | ($res.locations[0].physicalLocation.artifactLocation.uri // "?") as $loc
+                | ($res.locations[0].physicalLocation.region.startLine // 0) as $line
+                | "- **\($rule)** (\($sev)): `\($loc):\($line)`"
+              ] | .[0:10] | join("\n")
+              # Un campo de embed de Discord admite 1024 caracteres: pasarse devuelve
+              # HTTP 400 y se pierde el reporte entero. Se trunca aqui, dentro de jq,
+              # porque corta por codepoint (no parte un caracter UTF-8 a la mitad)
+              # y sobre el texto completo (a diferencia de `cut`, que corta por linea).
+              | if (. | length) > 950 then .[0:950] + "\n… (ver el run completo)" else . end
+            ' "$file" || echo "⚠️ SARIF ilegible — revisar el run"
+          }
+
+          CODEQL_FINDINGS=$(build_findings codeql-results.sarif)
+          SEMGREP_FINDINGS=$(build_findings semgrep-results.sarif)
+
+          AUDIT_FINDINGS=""
+          for f in npm-audit-backend.txt npm-audit-frontend.txt; do
+            if [ -f "$f" ]; then
+              AUDIT_FINDINGS="${AUDIT_FINDINGS}$(cat "$f")"$'\n'
+            fi
+          done
+          if [ -z "$AUDIT_FINDINGS" ]; then
+            AUDIT_FINDINGS="(no se pudo leer el resultado)"
+          fi
+          # Mismo limite de 1024 que arriba, truncado con jq por la misma razon.
+          AUDIT_FINDINGS=$(printf '%s' "$AUDIT_FINDINGS" | jq -Rrs 'if (. | length) > 950 then .[0:950] + "\n… (ver el run completo)" else . end')
+
+          PAYLOAD=$(jq -n \
+            --arg username "DEVSEC AppSec" \
+            --arg title "$TITLE" \
+            --arg description "$DESCRIPTION" \
+            --argjson color "$COLOR" \
+            --arg tests "$RESULT_TESTS" \
+            --arg codeql_result "$RESULT_CODEQL" \
+            --arg codeql_findings "$CODEQL_FINDINGS" \
+            --arg semgrep_result "$RESULT_SEMGREP" \
+            --arg semgrep_findings "$SEMGREP_FINDINGS" \
+            --arg audit_result "$RESULT_AUDIT" \
+            --arg audit_findings "$AUDIT_FINDINGS" \
+            --arg url "$RUN_URL" \
+            '{
+              username: $username,
+              embeds: [{
+                title: $title,
+                description: $description,
+                color: $color,
+                url: $url,
+                fields: [
+                  {name: "Tests y build", value: $tests, inline: false},
+                  {name: "CodeQL (\($codeql_result))", value: $codeql_findings, inline: false},
+                  {name: "Semgrep (\($semgrep_result))", value: $semgrep_findings, inline: false},
+                  {name: "npm audit (\($audit_result))", value: $audit_findings, inline: false}
+                ]
+              }]
+            }')
+
+          # `curl -sS` por si solo NO falla ante un error HTTP: un webhook revocado,
+          # un payload rechazado o un 429 dejarian este job en verde sin que llegue
+          # ninguna alerta — el pipeline quedaria mudo justo cuando importa. Se captura
+          # el codigo y se falla explicitamente. El cuerpo se imprime para diagnostico;
+          # nunca contiene la URL del webhook.
+          HTTP_CODE=$(curl -sS -o response.txt -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "❌ Discord rechazo la notificacion (HTTP $HTTP_CODE):"
+            cat response.txt
+            exit 1
+          fi
+          echo "✅ Notificacion enviada a Discord (HTTP $HTTP_CODE)."
