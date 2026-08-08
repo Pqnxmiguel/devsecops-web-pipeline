@@ -537,6 +537,18 @@ jobs:
               }]
             }')
 
-          curl -sS -X POST "$DISCORD_WEBHOOK_URL" \
+          # `curl -sS` por si solo NO falla ante un error HTTP: un webhook revocado,
+          # un payload rechazado o un 429 dejarian este job en verde sin que llegue
+          # ninguna alerta — el pipeline quedaria mudo justo cuando importa. Se captura
+          # el codigo y se falla explicitamente. El cuerpo se imprime para diagnostico;
+          # nunca contiene la URL del webhook.
+          HTTP_CODE=$(curl -sS -o response.txt -w '%{http_code}' -X POST "$DISCORD_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
-            -d "$PAYLOAD"
+            -d "$PAYLOAD")
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "❌ Discord rechazo la notificacion (HTTP $HTTP_CODE):"
+            cat response.txt
+            exit 1
+          fi
+          echo "✅ Notificacion enviada a Discord (HTTP $HTTP_CODE)."
