@@ -41,5 +41,11 @@ Guía de orquestación: `docs/agents/orquestacion.md`.
   sprite sheet + CSS `steps()`, sin librería.
 - Fuentes externas (AbuseIPDB, VirusTotal, URLhaus) tienen **modo mock por defecto**
   (`USE_MOCK_SOURCES=true`). El trabajo de SAST es estático — no dependas de rate limits.
-- Discord: secret `DISCORD_WEBHOOK_URL_APPSEC`, canal `#appsec-alerts`.
+- Pipeline: `.github/workflows/app-ci.yml` ya existe y su línea base está verde. Dispara en
+  **cualquier rama**, así que una VULN-NN reporta a Discord sin abrir PR. Antes de tocarlo,
+  leer las lecciones aprendidas en `.claude/agents/pipeline-engineer.md` — varias formas de
+  dejarlo "verde mintiendo" ya se cometieron una vez. **No crear `dependabot.yml`**: pelearía
+  contra VULN-06.
+- Discord: secret **`BOTDEVSECWEB`** (ya creado en el repo). El repo hermano de IaC usa
+  `BOTDEVSEC` — no confundirlos.
 - Todo debe correr a **costo $0** (tier gratuito de GitHub en repo público).

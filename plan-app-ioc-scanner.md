@@ -1,5 +1,24 @@
 # Plan de Desarrollo: IOC Scanner (App de Ciberseguridad)
 
+> **Estado (actualizado):** este documento es el plan ORIGINAL, tal como se escribió antes
+> de empezar a construir — se conserva así, sin reescribir el razonamiento, porque documenta
+> el porqué de las decisiones. Para el estado real y actualizado del proyecto (qué está
+> hecho, qué falta, qué esperar) ver **[`handoff.md`](handoff.md)**. Resumen rápido:
+> backend + frontend completos y fusionados a `main` (línea base limpia, sin
+> vulnerabilidades), modo real con AbuseIPDB/VirusTotal/URLhaus funcionando con tracker de
+> cuota diaria (fuera del alcance original de este plan, agregado a pedido durante la
+> construcción), y **`app-ci.yml` operativo con su línea base validada en verde**, incluida
+> la notificación a Discord (secret `BOTDEVSECWEB`, no el nombre que aparece más abajo en
+> este documento). Pendiente: las 8 `VULN-NN`. El inventario válido y actualizado vive en
+> [`.claude/agents/appsec-reviewer.md`](.claude/agents/appsec-reviewer.md), no en la
+> sección 3.4/4.3 de abajo, que fue el borrador inicial; el mapa de qué escáner detecta
+> cada una está en
+> [`docs/vulnerabilities/README.md`](docs/vulnerabilities/README.md).
+>
+> Dos decisiones posteriores contradicen lo que dice este plan, y mandan ellas:
+> **no se usa `dependabot.yml`** (configuraría PRs que suben dependencias y pelearían
+> contra VULN-06), y el secret de Discord se llama **`BOTDEVSECWEB`**.
+
 ## 1. Objetivo
 
 Construir una aplicación web sencilla — **backend + frontend** — en un **repositorio independiente y nuevo, `devsecops-web-pipeline`**, que sirva como superficie de código real para probar escáneres SAST de aplicaciones (Semgrep, CodeQL) y SCA (Dependabot).
@@ -17,9 +36,9 @@ Todo el desarrollo y las pruebas de escaneo son **estáticas** (SAST) — no req
 | Dominio | Infraestructura (IaC) | Aplicación (backend + frontend) |
 | Qué escanea | Archivos `.tf` | Código JS/TS (Node/Express, React) |
 | Escáneres SAST | Checkov, tfsec, Trivy | CodeQL, Semgrep |
-| Escáner SCA | — | Dependabot, npm audit |
+| Escáner SCA | — | npm audit (Dependabot quedó fuera, ver §5) |
 | Backend remoto Terraform | S3 + DynamoDB (propio) | — (no aplica; sin IaC propio, salvo que más adelante se agregue Terraform para desplegar la app) |
-| Webhook Discord | Canal `#security-alerts` (`DISCORD_WEBHOOK_URL_IAC`) | Canal nuevo `#appsec-alerts` (`DISCORD_WEBHOOK_URL_APPSEC`) |
+| Webhook Discord | secret `BOTDEVSEC` | secret `BOTDEVSECWEB` |
 | README | Referencia cruzada al repo de AppSec | Referencia cruzada al repo de IaC |
 
 Ambos README deben incluir una sección corta tipo *"Proyecto relacionado: ver [nombre del otro repo] para la contraparte de IaC/AppSec de esta iniciativa DevSecOps"*, con el link correspondiente.
@@ -96,9 +115,12 @@ Siguiendo el mismo patrón que usamos con Terraform — vulnerabilidades reales 
 
 La app completa sigue una dirección visual **pixel art / retro** (paleta limitada, bordes duros sin antialiasing, tipografía monoespaciada tipo 8-bit). El elemento central de esta identidad es una **mascota animada** — un personaje que acompaña al usuario durante el escaneo (ej. reacciona distinto según el veredicto: tranquilo si el IOC está limpio, alerta si es sospechoso/malicioso).
 
-![Mascota del proyecto](\DEVSECTF\devsecops-web-pipeline\imagen\personajeSpider.jpg)
+![Mascota del proyecto](imagen/spider.png)
 
-*(Imagen de referencia de la mascota — el archivo real se agrega directamente en el repo)*
+*(Imagen de referencia real de la mascota. El sprite sheet animado que consume el frontend
+se genera algorítmicamente a partir de esta foto — ver
+`frontend/scripts/generate-mascot-sprite.mjs`. La imagen original `personajeSpider.jpg` fue
+reemplazada por esta durante el rediseño a interfaz de chat/CCTV.)*
 
 **Requisitos técnicos de esta identidad:**
 - Sprites en formato *sprite sheet* (una sola imagen con varios frames) para las animaciones de la mascota (idle, alerta, éxito).
@@ -119,8 +141,14 @@ La app completa sigue una dirección visual **pixel art / retro** (paleta limita
 |---|---|---|---|
 | **CodeQL** | SAST | Backend + frontend (JS/TS), nativo de GitHub, mismo sistema SARIF ya usado con Checkov/tfsec/Trivy | Gratis (repos públicos) |
 | **Semgrep** | SAST | Reglas community para Node/Express y React (inyección, secrets, XSS) | Gratis (community rules) |
-| **Dependabot** | SCA | Dependencias de `package.json` con CVEs conocidos | Gratis (nativo GitHub) |
-| **npm audit** | SCA | Complementario a Dependabot, corre directo en el pipeline | Gratis |
+| **npm audit** | SCA | Dependencias de `package.json` con CVEs conocidos; corre y **bloquea** en el pipeline | Gratis |
+
+> **Dependabot quedó fuera.** El plan original lo listaba, pero `dependabot.yml` configura
+> *version updates*: PRs semanales que suben dependencias, incluida la que VULN-06 introduce
+> a propósito. En un repo cuyo objetivo es *sostener* una dependencia vulnerable, eso pelea
+> contra el inventario. La cobertura SCA la da `npm audit`. Lo que sí sirve, y es un
+> interruptor de repo y no un archivo, son las Dependabot **alerts** (detección en la
+> pestaña Security) — hoy apagadas.
 
 ---
 
@@ -226,10 +254,15 @@ Nota: esto es para pruebas funcionales locales, no reemplaza el DAST — no es p
 
 Se crea un canal y webhook **separado** del usado para IaC, siguiendo el mismo patrón ya implementado. Como ahora son dos repositorios distintos, cada uno guarda su propio secret de forma independiente — no se comparten entre repos:
 
-1. Nuevo canal en el servidor de Discord: `#appsec-alerts`.
-2. Nuevo webhook en ese canal (mismo proceso que en la Fase 0/6 de `devsecops-terraform-pipeline`).
-3. En el repo **`devsecops-web-pipeline`** → Settings → Secrets → nuevo secret `DISCORD_WEBHOOK_URL_APPSEC`.
-4. (Opcional, para simetría) en el repo **`devsecops-terraform-pipeline`**, renombrar el secret actual a `DISCORD_WEBHOOK_URL_IAC` para que ambos queden identificados claramente por dominio al documentar el proyecto conjunto.
+> **Ya implementado, con nombres distintos a los que proponía este borrador.** El secret de
+> este repo es **`BOTDEVSECWEB`** y el del repo de IaC es **`BOTDEVSEC`**. La entrega está
+> verificada (HTTP 204) y el job de notificación falla explícitamente si Discord rechaza el
+> mensaje, para que el pipeline no quede mudo en silencio.
+
+1. Canal propio en el servidor de Discord, separado del de IaC.
+2. Webhook en ese canal (mismo proceso que en la Fase 0/6 de `devsecops-terraform-pipeline`).
+3. En el repo **`devsecops-web-pipeline`** → Settings → Secrets → secret `BOTDEVSECWEB`.
+4. Cada repo guarda su propio secret de forma independiente — no se comparten.
 
 ---
 
@@ -237,18 +270,23 @@ Se crea un canal y webhook **separado** del usado para IaC, siguiendo el mismo p
 
 Al ser un repositorio independiente, el trigger no necesita filtrar por `paths` de un subdirectorio compartido — corre sobre todo el repo, ya que aquí solo vive código de aplicación:
 
+Estructura final implementada (difiere del borrador: dispara en **cualquier** rama, para que
+una VULN-NN reporte a Discord sin necesidad de abrir el PR):
+
 ```yaml
 on:
+  push:
+    branches: ['**']
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
-  sast-codeql-app:      # CodeQL sobre backend/ y frontend/
-  sast-semgrep-app:      # Semgrep con reglas community JS/React
-  sca-npm-audit:          # npm audit sobre ambos package.json
-  notify-discord-appsec:  # Notificación al webhook DISCORD_WEBHOOK_URL_APPSEC si algo falla
+  build-test:      # matriz backend/frontend: npm ci, lint, tests, build
+  sast-codeql:     # CodeQL JS/TS security-extended -> bloquea con >=1 hallazgo
+  sast-semgrep:    # 6 packs community -> bloquea con >=1 error/warning
+  sca-npm-audit:   # matriz backend/frontend -> bloquea con >=1 high/critical
+  notify-discord:  # embed a secrets.BOTDEVSECWEB; se omite en pull_request
 ```
 
 Mismo patrón que `terraform-ci.yml` (repo hermano): jobs independientes, cada uno con su propio bloqueo, SARIF subido a Code Scanning, y notificación a Discord — pero con su propio secret de webhook, distinto al de IaC.
@@ -268,13 +306,16 @@ Mismo patrón que `terraform-ci.yml` (repo hermano): jobs independientes, cada u
 
 ## 10. Próximos pasos
 
-1. Crear el repositorio `devsecops-web-pipeline` en GitHub (público, para Code Scanning/Actions gratis) y clonarlo localmente — mismo proceso que la Fase 0 del repo de IaC.
-2. Crear la estructura de carpetas `backend/` y `frontend/` dentro del nuevo repo.
-3. Backend: `npm init`, Express, endpoints base + vulnerabilidades intencionales documentadas.
-4. Frontend: scaffold React + Tailwind, formulario + panel de resultado, definir paleta pixel art como tokens de Tailwind.
-5. Crear/conseguir el sprite sheet de la mascota (Piskel/Aseprite) y montar la animación con CSS `steps()`.
-6. Agregar en el README de ambos repos la referencia cruzada entre `devsecops-terraform-pipeline` y `devsecops-web-pipeline`.
-7. Correr Semgrep y CodeQL **en local** primero (mismo patrón que Checkov/tfsec) para validar qué detectan antes de automatizar.
-8. Crear `app-ci.yml`.
-9. Webhook nuevo de Discord + secret nuevo (`DISCORD_WEBHOOK_URL_APPSEC`) en el nuevo repo.
-10. PR de prueba con una vulnerabilidad aislada, confirmar detección + anotación línea por línea + bloqueo + notificación.
+1. ✅ Crear el repositorio `devsecops-web-pipeline` en GitHub (público, para Code Scanning/Actions gratis) y clonarlo localmente — mismo proceso que la Fase 0 del repo de IaC.
+2. ✅ Crear la estructura de carpetas `backend/` y `frontend/` dentro del nuevo repo.
+3. ✅ Backend: `npm init`, Express, endpoints base. Vulnerabilidades intencionales: **todavía no introducidas** (ver punto 10).
+4. ✅ Frontend: React + Tailwind, interfaz de chat/CCTV con la mascota (evolucionó del formulario+panel original del plan), paleta pixel art como tokens de Tailwind.
+5. ✅ Sprite sheet de la mascota — generado algorítmicamente desde una foto real (`generate-mascot-sprite.mjs`) en vez de dibujado a mano en Piskel/Aseprite, y animado con CSS `steps()` como estaba previsto.
+6. ⬜ Agregar en el README de ambos repos la referencia cruzada entre `devsecops-terraform-pipeline` y `devsecops-web-pipeline` (falta confirmar si ya existe del lado de `devsecops-terraform-pipeline`).
+7. ✅ Validar qué detectan los escáneres antes de confiar en el pipeline — **no fue posible en local** (Docker no disponible y Semgrep no tiene binario para Windows). Se hizo por la vía equivalente: pushear el workflow a una rama de descarte y validar ahí, mergeando a `main` recién con la línea base en verde. Ese sigue siendo el procedimiento para cualquier cambio de pipeline.
+8. ✅ Crear `app-ci.yml`. Operativo en `main`: CodeQL 0 hallazgos, Semgrep 0 bloqueantes (222 reglas / 93 archivos), npm audit 0 en ambos paquetes.
+9. ✅ Webhook de Discord + secret **`BOTDEVSECWEB`**, entrega confirmada (HTTP 204). Sin `dependabot.yml`, a propósito.
+10. ⬜ Introducir las 8 `VULN-NN` una por una, cada una en su propia rama/PR contra el pipeline ya funcionando, y confirmar detección + anotación línea por línea + bloqueo + notificación por cada una. **Leer antes [`docs/vulnerabilities/README.md`](docs/vulnerabilities/README.md):** varias tienen restricciones de implementación sin las cuales no llegan siquiera a escanearse.
+
+Detalle completo del estado actual, decisiones no previstas en este plan (tracker de cuota
+diaria, modo real con las 3 fuentes) y qué falta exactamente: **[`handoff.md`](handoff.md)**.

@@ -11,7 +11,7 @@ instrucción, y en qué orden construir el proyecto.
 |---|---|---|---|
 | `backend-builder` | `backend/` | lectura + **escritura** + bash | API Express + VULN-01…06 |
 | `frontend-builder` | `frontend/` | lectura + **escritura** + bash | React/Tailwind + pixel art + VULN-07, 08 |
-| `pipeline-engineer` | `.github/` | lectura + **escritura** + bash | CodeQL, Semgrep, npm audit, Discord |
+| `pipeline-engineer` | `.github/` | lectura + **escritura** + bash | CodeQL, Semgrep, npm audit, Discord (`BOTDEVSECWEB`) |
 | `appsec-reviewer` | todo | **solo lectura** | audita: ¿toda vuln es intencional? |
 
 La separación no es decorativa. Hace tres cosas:
@@ -109,19 +109,37 @@ Backend: VULN-01…06. Frontend: VULN-07, 08.
 Cada una con su comentario `[VULN-INTENCIONAL]` y su `docs/vulnerabilities/VULN-NN.md`.
 → Al terminar: `appsec-reviewer` verifica cobertura, marcado, documentación y aislamiento.
 
-### Fase 4 — Validación local de escáneres
-`pipeline-engineer` corre Semgrep y CodeQL **en local** y produce el mapa de cobertura:
-qué VULN-NN detecta cada escáner, y cuáles no detecta nadie.
-→ Ese mapa es el resultado más valioso del proyecto. Un escáner que no detecta una
-vulnerabilidad que sabes que está ahí te enseña más que uno que la detecta.
+### Fase 4 — Pipeline ✅ hecha
+`pipeline-engineer` escribió `app-ci.yml` (sin `dependabot.yml`, ver abajo) y validó su
+**línea base en verde**: CodeQL 0 hallazgos, Semgrep 0 bloqueantes, npm audit 0, Discord
+entregando.
 
-### Fase 5 — Pipeline
-`pipeline-engineer` escribe `app-ci.yml` y `dependabot.yml` contra los hallazgos **reales**
-de la fase 4, no contra hipótesis.
+El orden salió invertido respecto a lo previsto: la fase 5 original ("validación local de
+escáneres") **no se pudo hacer** — Docker no estaba disponible y Semgrep no tiene binario
+para Windows. La vía equivalente, que quedó como procedimiento permanente: el workflow
+dispara en cualquier rama, así que se pushea a una rama de descarte, se valida ahí, y se
+mergea a `main` recién cuando sale verde. **Nunca estrenar un cambio de pipeline directo en
+`main`.**
 
-### Fase 6 — PR de prueba
-Rama con una vulnerabilidad aislada → confirmar detección, anotación línea por línea,
-bloqueo del PR, y notificación a Discord.
+Esa inversión tuvo una consecuencia útil: al no poder predecir los hallazgos, el pipeline se
+construyó defensivo, y los dos primeros runs reales destaparon dos bugs que lo dejaban
+"verde mintiendo" (un pack inexistente y un gate que no contaba nada). Ambos están
+documentados como lecciones en `.claude/agents/pipeline-engineer.md`.
+
+### Fase 5 — Vulnerabilidades intencionales, una por rama
+Backend: VULN-01…06. Frontend: VULN-07, 08. Cada una con su comentario
+`[VULN-INTENCIONAL]`, su `docs/vulnerabilities/VULN-NN.md`, y su propia rama.
+→ Al terminar cada una: `appsec-reviewer` verifica cobertura, marcado, documentación y
+aislamiento; se confirma detección, anotación línea por línea, bloqueo y alerta en Discord.
+→ **Antes de escribir cualquiera, leer [`docs/vulnerabilities/README.md`](../vulnerabilities/README.md):**
+varias tienen restricciones sin las cuales no llegan siquiera a escanearse (push protection
+bloquea el push, el gate no dispara con `moderate`, etc.).
+
+### El mapa de cobertura es el entregable
+Qué VULN-NN detecta cada escáner, y **cuáles no detecta nadie**. Un escáner que no detecta
+una vulnerabilidad que sabes que está ahí te enseña más que uno que la detecta — VULN-05
+(CWE-770) es probablemente el mejor ejemplo, y es un límite conceptual del SAST, no un fallo
+de configuración.
 
 ---
 
