@@ -188,6 +188,14 @@ jobs:
           #                              Access-Control-Allow-Origin: * (CWE-942).
           #   p/react, p/typescript   -> dangerouslySetInnerHTML (CWE-79)
           #   p/secrets               -> API keys hardcodeadas (CWE-798 / CWE-200)
+          #
+          # Supresion unica, justificada: node_insecure_random_generator marca los
+          # Math.random() de useAmbientGlitch.ts y useCorruptedClock.ts, que generan
+          # el parpadeo visual de la estetica CCTV. No hay uso criptografico de
+          # aleatoriedad en toda la app, y ninguna VULN-NN del inventario depende de
+          # ella. Se excluye la regla desde el pipeline y no con comentarios
+          # `nosemgrep` en el codigo para no ensuciar el frontend con ruido de
+          # escaner: este workflow no toca backend/ ni frontend/.
           set +e
           semgrep scan \
             --config=p/javascript \
@@ -200,6 +208,7 @@ jobs:
             --exclude=node_modules \
             --exclude=dist \
             --exclude=coverage \
+            --exclude-rule=ajinabraham.njsscan.crypto.crypto_node.node_insecure_random_generator \
             --metrics=off \
             backend frontend
           RC=$?
@@ -247,7 +256,21 @@ jobs:
           TOTAL=$(jq '[.runs[].results[]?] | length' semgrep-results.sarif)
           # Solo error/warning bloquean; los "note" (INFO) son informativos y no
           # deberian tumbar el pipeline por ruido de reglas de estilo.
-          BLOCKING=$(jq '[.runs[].results[]? | select(.level == "error" or .level == "warning")] | length' semgrep-results.sarif)
+          #
+          # OJO con el nivel: Semgrep NO escribe `level` en cada resultado, lo declara
+          # una sola vez por regla en tool.driver.rules[].defaultConfiguration.level
+          # (la spec SARIF dice que un resultado sin `level` hereda el de su regla).
+          # Leer `.level` directo del resultado da null SIEMPRE, y el gate contaria 0
+          # incluso con hallazgos ERROR: Semgrep no bloquearia nunca nada. Hay que
+          # resolverlo contra la metadata. Si no se puede resolver se asume "warning",
+          # que es el default seguro para un gate (ante la duda, bloquea).
+          BLOCKING=$(jq '
+            [ .runs[] as $r
+              | (INDEX($r.tool.driver.rules[]?; .id)) as $rules
+              | $r.results[]?
+              | (.level // $rules[.ruleId].defaultConfiguration.level // "warning")
+              | select(. == "error" or . == "warning")
+            ] | length' semgrep-results.sarif)
           echo "Semgrep encontro $TOTAL hallazgos ($BLOCKING bloqueantes)"
           echo "issues=$TOTAL" >> "$GITHUB_OUTPUT"
           echo "blocking=$BLOCKING" >> "$GITHUB_OUTPUT"
@@ -445,15 +468,22 @@ jobs:
               echo "Sin hallazgos ✅"
               return
             fi
+            # El nivel se resuelve contra la metadata de la regla por la misma razon
+            # que en el gate de Semgrep: leer `.level` del resultado da null y el
+            # mensaje mostraria todo como "🟢 Bajo". CodeQL si lo trae por resultado,
+            # asi que el `.level //` de la izquierda gana y sirve para ambos SARIF.
             jq -r '
-              [.runs[].results[]? |
-                (if .level == "error" then "🔴 Alto"
-                 elif .level == "warning" then "🟡 Medio"
-                 else "🟢 Bajo" end) as $sev |
-                ((.ruleId // "regla") | split(".") | last) as $rule |
-                (.locations[0].physicalLocation.artifactLocation.uri // "?") as $loc |
-                (.locations[0].physicalLocation.region.startLine // 0) as $line |
-                "- **\($rule)** (\($sev)): `\($loc):\($line)`"
+              [ .runs[] as $r
+                | (INDEX($r.tool.driver.rules[]?; .id)) as $rules
+                | $r.results[]? | . as $res
+                | ($res.level // $rules[$res.ruleId].defaultConfiguration.level // "warning") as $lvl
+                | (if $lvl == "error" then "🔴 Alto"
+                   elif $lvl == "warning" then "🟡 Medio"
+                   else "🟢 Bajo" end) as $sev
+                | (($res.ruleId // "regla") | split(".") | last) as $rule
+                | ($res.locations[0].physicalLocation.artifactLocation.uri // "?") as $loc
+                | ($res.locations[0].physicalLocation.region.startLine // 0) as $line
+                | "- **\($rule)** (\($sev)): `\($loc):\($line)`"
               ] | .[0:10] | join("\n")
               # Un campo de embed de Discord admite 1024 caracteres: pasarse devuelve
               # HTTP 400 y se pierde el reporte entero. Se trunca aqui, dentro de jq,
