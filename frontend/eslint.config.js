@@ -4,7 +4,11 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist'] },
+  // `.vite` es la cache de pre-bundling que deja el dev server y `coverage` la de
+  // vitest: ambas son artefactos locales (gitignorados) con codigo de terceros que
+  // ensucia el lint. Sin esto, `npm run lint` falla en cualquier maquina que haya
+  // levantado el dev server, aunque el codigo propio este impecable.
+  { ignores: ['dist', '.vite', 'coverage'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx}'],
