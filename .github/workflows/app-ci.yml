@@ -180,8 +180,12 @@ jobs:
         id: semgrep
         run: |
           # Packs elegidos por cobertura de las VULN-NN previstas:
-          #   p/javascript, p/nodejs  -> child_process.exec (CWE-78), eval (CWE-95)
-          #   p/express               -> CORS abierto (CWE-942)
+          #   p/javascript, p/nodejs  -> child_process.exec (CWE-78), eval (CWE-95).
+          #                              p/javascript ya incluye las reglas
+          #                              javascript.express.security.* (no existe un
+          #                              pack p/express: devuelve HTTP 404).
+          #   p/nodejsscan            -> header_cors_star, la unica regla que detecta
+          #                              Access-Control-Allow-Origin: * (CWE-942).
           #   p/react, p/typescript   -> dangerouslySetInnerHTML (CWE-79)
           #   p/secrets               -> API keys hardcodeadas (CWE-798 / CWE-200)
           set +e
@@ -190,7 +194,7 @@ jobs:
             --config=p/typescript \
             --config=p/react \
             --config=p/nodejs \
-            --config=p/express \
+            --config=p/nodejsscan \
             --config=p/secrets \
             --sarif --output=semgrep-results.sarif \
             --exclude=node_modules \
