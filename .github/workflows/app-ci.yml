@@ -189,6 +189,15 @@ jobs:
           #   p/react, p/typescript   -> dangerouslySetInnerHTML (CWE-79)
           #   p/secrets               -> API keys hardcodeadas (CWE-798 / CWE-200)
           #
+          # La regla suelta `r/javascript.lang.security.detect-child-process`
+          # cubre un HUECO REAL de los packs: ninguno de los seis detecta
+          # inyeccion de comandos (CWE-78) en codigo ESM. El `detect-child-process`
+          # que trae p/javascript es la variante de AWS Lambda, cuyas sources son
+          # `exports.handler` y por tanto nunca dispara en Express; y el
+          # `generic_os_command_exec` de njsscan exige `require()` de CommonJS,
+          # imposible en este backend (`"type": "module"`). Sin esta regla,
+          # VULN-01 pasaria en verde. Descubierto auditando VULN-01.
+          #
           # Supresion unica, justificada: node_insecure_random_generator marca los
           # Math.random() de useAmbientGlitch.ts y useCorruptedClock.ts, que generan
           # el parpadeo visual de la estetica CCTV. No hay uso criptografico de
@@ -204,6 +213,7 @@ jobs:
             --config=p/nodejs \
             --config=p/nodejsscan \
             --config=p/secrets \
+            --config=r/javascript.lang.security.detect-child-process \
             --sarif --output=semgrep-results.sarif \
             --exclude=node_modules \
             --exclude=dist \
