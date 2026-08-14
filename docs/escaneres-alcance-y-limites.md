@@ -125,11 +125,18 @@ r/javascript.lang.security.detect-child-process
 ```
 
 Tamaños medidos: `p/nodejsscan` 113 reglas, `p/javascript` y `p/typescript` 74 cada uno,
-`p/secrets` 52, `p/nodejs` 36, y **`p/react` sólo 4**. La unión tras deduplicar queda en
-~222 reglas sobre 93 archivos.
+`p/secrets` 52, `p/nodejs` 36, y **`p/react` sólo 4**. Tras deduplicar y filtrar por
+lenguaje, el run efectivo es de **224 reglas sobre 93 archivos**.
 
 Un `p/` es una colección; un `r/` es una regla individual **del mismo catálogo público**.
 Ninguna es nuestra.
+
+> **Los packs no están congelados.** La línea base de seis packs corría 222 reglas; el run
+> siguiente, con una regla suelta añadida, corrió 224. La diferencia no es de uno: la
+> comunidad añadió otra por debajo, sin que nadie tocara la configuración. Es el mismo
+> fenómeno que el advisory de `nanoid` descrito más abajo, pero en la capa de reglas: **la
+> configuración es estable, el comportamiento no.** Por eso el conteo de reglas es un dato
+> que conviene mirar en cada run, no una constante.
 
 Línea base: **0 bloqueantes**, 7 informativos (`good_helmet_checks` de njsscan, que
 confirman que Helmet está bien configurado — no son vulnerabilidades).
