@@ -38,7 +38,9 @@ Cualquier hallazgo **fuera** de esta tabla es, por definición, una vulnerabilid
 intencional y debe reportarse como tal.
 
 La columna de escáneres es una **predicción** contrastada contra los packs realmente
-configurados, no un resultado: ninguna VULN-NN está introducida todavía. El mapa detallado
+configurados. **VULN-01 (CWE-78) ya está introducida** en su rama y su predicción quedó
+**confirmada** (CodeQL y Semgrep la detectaron); las demás (VULN-02…08) siguen siendo
+predicción hasta que se introduzcan. El mapa detallado
 —por qué VULN-05 es un hueco estructural del SAST, y qué restricciones tiene implementar
 cada una para que llegue siquiera a escanearse— vive en
 [`docs/vulnerabilities/README.md`](../../docs/vulnerabilities/README.md). **Léelo antes de

@@ -9,7 +9,14 @@
 > cuota diaria (fuera del alcance original de este plan, agregado a pedido durante la
 > construcción), y **`app-ci.yml` operativo con su línea base validada en verde**, incluida
 > la notificación a Discord (secret `BOTDEVSECWEB`, no el nombre que aparece más abajo en
-> este documento). Pendiente: las 8 `VULN-NN`. El inventario válido y actualizado vive en
+> este documento). **En curso: las `VULN-NN`, una por rama. VULN-01 (CWE-78, inyección de
+> comandos) ya está introducida** —documentada en
+> [`docs/vulnerabilities/VULN-01.md`](docs/vulnerabilities/VULN-01.md), con runbook de
+> explotación reproducible en `VULN-01-explotacion.md`—; faltan VULN-02…08. Auditando VULN-01
+> se descubrió que ningún pack de Semgrep detecta inyección de comandos en ESM, y hubo que
+> sumar una regla suelta al pipeline; las limitaciones de cada escáner quedaron en
+> [`docs/escaneres-alcance-y-limites.md`](docs/escaneres-alcance-y-limites.md). El inventario
+> válido y actualizado vive en
 > [`.claude/agents/appsec-reviewer.md`](.claude/agents/appsec-reviewer.md), no en la
 > sección 3.4/4.3 de abajo, que fue el borrador inicial; el mapa de qué escáner detecta
 > cada una está en

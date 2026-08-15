@@ -14,24 +14,32 @@ vulnerabilidad que sabemos que está ahí enseña más que uno que la detecta.
 
 ---
 
-## 1. Estado: ninguna VULN-NN introducida todavía
+## 1. Estado: VULN-01 introducida en su rama; VULN-02…08 pendientes
 
-`main` es hoy la **línea base limpia**, y está verificada en CI:
+`main` sigue siendo la **línea base limpia** (sin vulnerabilidades), verificada en CI:
 
 | Escáner | Resultado sobre la línea base | Verificado |
 |---|---|---|
 | CodeQL (`security-extended`) | 0 hallazgos | ✅ run en `main` |
-| Semgrep (222 reglas, 93 archivos) | 0 bloqueantes, 7 informativos | ✅ run en `main` |
+| Semgrep (224 reglas, 93 archivos) | 0 bloqueantes, 7 informativos | ✅ run en `main` |
 | npm audit (backend / frontend) | 0 / 0 vulnerabilidades | ✅ run en `main` |
 | Notificación a Discord | entregada (HTTP 204) | ✅ run en `main` |
 
 Los 7 informativos son reglas `good_helmet_checks` de njsscan: **no son vulnerabilidades**,
 son confirmaciones de que Helmet está bien configurado. Aparecen en Code Scanning como
-`note` y no bloquean.
+`note` y no bloquean. (La línea base original fueron 222 reglas; son 224 desde que se sumó la
+regla suelta de inyección de comandos — ver la fila 01 de §2 y
+[`../escaneres-alcance-y-limites.md`](../escaneres-alcance-y-limites.md).)
 
 **Que la línea base esté en verde es el requisito para que todo lo demás signifique algo.**
 Si el pipeline reportara ruido sobre código limpio, ninguna VULN-NN posterior sería
 distinguible de ese ruido.
+
+**VULN-01 (CWE-78) ya está introducida** en la rama `vuln/VULN-01-command-injection` (su
+detalle, `VULN-01.md` y el runbook `VULN-01-explotacion.md`, vive en esa rama). En el run de
+la rama, **CodeQL y Semgrep la detectaron y bloquearon** en la llamada a `exec` de
+`diagnosticsController.js` — confirmando la predicción de la fila 01 de §2. Faltan
+VULN-02…08.
 
 ---
 

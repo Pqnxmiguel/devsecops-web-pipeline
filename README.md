@@ -24,11 +24,13 @@ No uses este código en producción. Contiene **8 vulnerabilidades intencionales
 
 Cualquier vulnerabilidad fuera de ese inventario es un bug real.
 
-**Estado actual:** ninguna `VULN-NN` está introducida todavía. `main` es hoy la línea base
-limpia (backend + frontend completos, sin vulnerabilidades) **con el pipeline ya operativo y
-en verde** — el requisito para que cada vulnerabilidad que se introduzca después sea
-distinguible del ruido. Se abrirán una por una, en ramas dedicadas. Ver
-[`handoff.md`](handoff.md) para qué falta y en qué orden.
+**Estado actual:** `main` es la línea base limpia (backend + frontend completos, sin
+vulnerabilidades) **con el pipeline operativo y en verde**. La primera vulnerabilidad,
+**`VULN-01` (CWE-78, inyección de comandos), ya está introducida** en su rama dedicada
+(`vuln/VULN-01-command-injection`) — detectada y bloqueada por CodeQL y Semgrep; ver
+[`docs/vulnerabilities/VULN-01.md`](docs/vulnerabilities/VULN-01.md). Faltan `VULN-02`…`VULN-08`,
+que se abrirán una por una en sus propias ramas. Ver [`handoff.md`](handoff.md) para el estado
+completo y los próximos pasos.
 
 ---
 
@@ -51,7 +53,7 @@ la línea base limpia**:
 | Herramienta | Tipo | Cubre | Bloquea con | Línea base |
 |---|---|---|---|---|
 | CodeQL | SAST | Backend + frontend (JS/TS), `security-extended` | ≥1 hallazgo | ✅ 0 hallazgos |
-| Semgrep | SAST | 6 packs community (222 reglas) | ≥1 `error`/`warning` | ✅ 0 bloqueantes |
+| Semgrep | SAST | 6 packs community + 1 regla suelta (224 reglas) | ≥1 `error`/`warning` | ✅ 0 bloqueantes |
 | npm audit | SCA | `backend/` y `frontend/` | ≥1 `high`/`critical` | ✅ 0 / 0 |
 
 Todo corre en el tier gratuito de repos públicos (**costo $0**). Los hallazgos se suben como

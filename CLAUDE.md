@@ -45,7 +45,11 @@ Guía de orquestación: `docs/agents/orquestacion.md`.
   **cualquier rama**, así que una VULN-NN reporta a Discord sin abrir PR. Antes de tocarlo,
   leer las lecciones aprendidas en `.claude/agents/pipeline-engineer.md` — varias formas de
   dejarlo "verde mintiendo" ya se cometieron una vez. **No crear `dependabot.yml`**: pelearía
-  contra VULN-06.
+  contra VULN-06. Qué cubre y qué se le escapa a cada escáner (CodeQL, Semgrep, npm audit),
+  con la configuración real: `docs/escaneres-alcance-y-limites.md`.
+- Demo por rama, sin rebase: `main` = línea base (push → verde), cada `vuln/VULN-0N-…` =
+  base + su vulnerabilidad (push → rojo). Las ramas de vulnerabilidad se ramifican desde
+  `main` y no se mezclan con él. Estado y próximos pasos siempre en `handoff.md`.
 - Discord: secret **`BOTDEVSECWEB`** (ya creado en el repo). El repo hermano de IaC usa
   `BOTDEVSEC` — no confundirlos.
 - Todo debe correr a **costo $0** (tier gratuito de GitHub en repo público).

@@ -18,11 +18,29 @@ Repo: https://github.com/Pqnxmiguel/devsecops-web-pipeline (público). Repo herm
 
 ## 2. Estado de git — leer esto primero
 
-- **`main` está publicado y al día con `origin/main`.** Contiene backend + frontend
-  completos, modo real, tracker de cuota, y el pipeline `app-ci.yml`.
-- Ramas en el remoto: `feat/frontend` y `chore/ci-pipeline`, ambas ya mergeadas a `main`
-  con `--no-ff`. Se conservan (convención del repo: no se borran tras el merge).
-- Línea base limpia y **verificada en CI**, no solo en local: ver §3.
+**Fase actual: VULN-01 (CWE-78) introducida en su rama; el resto (VULN-02…08) pendiente.**
+
+- **`main` = línea base limpia + pipeline completo.** Contiene backend + frontend, modo real,
+  tracker de cuota, y `app-ci.yml`. Desde VULN-01 incorpora además dos cosas necesarias para
+  todas las vulnerabilidades siguientes: la **regla suelta de Semgrep**
+  `r/javascript.lang.security.detect-child-process` (ningún pack detecta inyección de comandos
+  en ESM — ver §3) y el **fix del advisory de `nanoid`** (ver §3, "incidente nanoid"). También
+  el doc `docs/escaneres-alcance-y-limites.md`.
+- **Modelo de demo por ramas separadas, sin rebase ni merge entre vulnerabilidad y base:**
+  - `main` → push → **corrida en verde** (código limpio, el pipeline no molesta).
+  - `vuln/VULN-01-command-injection` → push → **corrida en rojo** (los SAST detectan y
+    bloquean). La rama lleva su propio fix de `nanoid` (cherry-pick), así su único rojo es el
+    SAST. Runbook completo: `docs/vulnerabilities/VULN-01-explotacion.md`.
+  - Para VULN-02…08: se ramifica desde `main`, se introduce la vulnerabilidad, se pushea. Como
+    `main` ya trae la regla y el fix de nanoid, cada rama nueva los hereda. **No hace falta
+    rebase.**
+- **Nota de sincronía:** al escribir esto, `main` y la rama de VULN-01 pueden estar por
+  delante de `origin` (commits locales listos para el push de la demo). Ambas avanzan sin
+  divergir: el push es fast-forward, sin `--force`. Comprobar con
+  `git rev-list --left-right --count origin/<rama>...<rama>`.
+- Ramas en el remoto: `feat/frontend`, `chore/ci-pipeline` (ambas mergeadas a `main` con
+  `--no-ff`) y `chore/semgrep-regla-child-process` (su contenido —regla + nanoid + docs— ya
+  está en `main` por fast-forward). Se conservan (convención del repo: no se borran).
 - Tests: 318 backend + 45 frontend, lint y builds limpios.
 
 ## 3. Qué está construido y funcionando
@@ -46,8 +64,11 @@ Repo: https://github.com/Pqnxmiguel/devsecops-web-pipeline (público). Repo herm
   - URLhaus: sin límite publicado, nunca bloquea, sólo cuenta para informar.
   - El gating corta ANTES de tocar la red si no queda margen — nunca se arriesga a superar
     el límite real de un proveedor.
-- Vulnerabilidades intencionales: **ninguna implementada todavía** (confirmado por
-  auditoría de `appsec-reviewer`, ver §6).
+- Vulnerabilidades intencionales: **VULN-01 (CWE-78) implementada** en la rama
+  `vuln/VULN-01-command-injection` — `POST /api/diagnose/dns` en
+  `backend/src/controllers/diagnosticsController.js`, con `exec()` interpolando el input sin
+  validar. Documentada en `docs/vulnerabilities/VULN-01.md` (análisis) y
+  `VULN-01-explotacion.md` (runbook). **VULN-02…08 aún no.** `main` sigue limpio.
 
 ### Frontend (`frontend/`)
 - Interfaz de **chat con la mascota** (no formulario+panel como decía el plan original): el
@@ -75,12 +96,28 @@ backend/frontend), `sast-codeql`, `sast-semgrep`, `sca-npm-audit` (matriz), `not
 | Escáner | Línea base | Bloquea con |
 |---|---|---|
 | CodeQL `security-extended` | 0 hallazgos | ≥1 hallazgo |
-| Semgrep (6 packs, 222 reglas, 93 archivos) | 0 bloqueantes, 7 informativos | ≥1 `error`/`warning` |
+| Semgrep (6 packs + 1 regla suelta, **224 reglas**, 93 archivos) | 0 bloqueantes, 7 informativos | ≥1 `error`/`warning` |
 | npm audit backend / frontend | 0 / 0 | ≥1 `high`/`critical` |
 | Discord (`BOTDEVSECWEB`) | entregado, HTTP 204 | — |
 
 Los 7 informativos son reglas `good_helmet_checks` de njsscan: confirman que Helmet **está**
 bien configurado, no son vulnerabilidades.
+
+**La regla suelta `r/javascript.lang.security.detect-child-process`** se añadió al descubrir,
+auditando VULN-01, que **ninguno de los seis packs detecta inyección de comandos (CWE-78) en
+código ESM**: el `detect-child-process` de `p/javascript` es la variante de AWS Lambda (nunca
+dispara en Express) y el de njsscan exige `require()` de CommonJS. Sin esa regla, VULN-01
+pasaba en verde. El conteo de reglas no es fijo: la línea base fueron 222, tras la regla son
+224, y los packs del registry cambian por debajo sin tocar la config. Detalle en
+`docs/escaneres-alcance-y-limites.md` y `docs/vulnerabilities/VULN-01.md` §4.
+
+**Incidente `nanoid` (2026-08-14) — un resultado de SCA caduca.** Una rama que sólo tocaba
+`app-ci.yml` hizo fallar `npm audit` en backend y frontend: `nanoid <3.3.18`
+(GHSA-2v37-7h3g-55p8, *high*), transitiva. Nadie tocó una dependencia — se **publicó el
+advisory** después del run de la línea base. Es un bug real (fuera del inventario intencional),
+corregido con `npm audit fix` (3.3.17 → 3.3.18) en ambos lockfiles y ya en `main`. Lección: un
+SAST verde sigue válido mañana; un SCA verde sólo dice "no había advisory conocido entonces" —
+el escaneo de dependencias tiene que ser recurrente, no sólo por commit.
 
 Decisiones que no son obvias:
 
@@ -162,12 +199,27 @@ veredicto, no es un bug.)
 
 ## 6. Qué falta — en orden
 
-1. **Introducir las 8 `VULN-NN`, una por una**, cada una en su propia rama contra el
-   pipeline ya funcionando, para demostrar detección/anotación/bloqueo/notificación
-   individualmente. Inventario canónico y único válido:
-   [`.claude/agents/appsec-reviewer.md`](.claude/agents/appsec-reviewer.md) (VULN-01 CWE-78
-   hasta VULN-08 CWE-200) — **no** la lista del borrador en
+0. **VULN-01 (CWE-78) — HECHA, pendiente de lanzar la corrida de demo.** Está en su rama con
+   código, tests, análisis (`VULN-01.md`) y runbook (`VULN-01-explotacion.md`). En el run
+   previo de la rama, **ambos SAST la detectaron y bloquearon** (CodeQL
+   `js/command-line-injection`, Semgrep `detect-child-process`, ambos `error`, en la llamada a
+   `exec` de `diagnosticsController.js`); npm audit y tests en verde. Lo que queda es la demo
+   de dos pushes (§2): `main` en verde, la rama de VULN-01 en rojo. Al lanzarla, rellenar el
+   "Registro de la corrida real" al final de `VULN-01-explotacion.md` y la fila "Detección
+   real" de `VULN-01.md`.
+
+1. **Introducir VULN-02 … VULN-08, una por una**, cada una en su propia rama **ramificada
+   desde `main`**, contra el pipeline ya funcionando, para demostrar
+   detección/anotación/bloqueo/notificación individualmente. Inventario canónico y único
+   válido: [`.claude/agents/appsec-reviewer.md`](.claude/agents/appsec-reviewer.md) (VULN-01
+   CWE-78 hasta VULN-08 CWE-200) — **no** la lista del borrador en
    `plan-app-ioc-scanner.md` §3.4/§4.3, que quedó desactualizada.
+
+   Lección transversal de VULN-01, aplicable a todas: **la forma sintáctica de escribir la
+   vulnerabilidad decide si un escáner la ve, con independencia del riesgo real.** Por eso,
+   auditar con `appsec-reviewer` **antes** de pushear cada una — puede detectar que está
+   escrita de un modo que ningún escáner reconocería (fue exactamente lo que pasó con la
+   primera versión de VULN-01).
 
    **Leer antes [`docs/vulnerabilities/README.md`](docs/vulnerabilities/README.md).** Tiene
    el mapa de cobertura previsto y, sobre todo, las restricciones de implementación sin las
@@ -189,9 +241,10 @@ veredicto, no es un bug.)
      commitear nada — el código conceptual ya se pensó una vez, puede ser un punto de
      partida cuando llegue su turno, pero no existe en el repo hoy.
    - Al implementar VULN-01/02/03/08: hacerlo con `USE_MOCK_SOURCES=true`.
-2. Crear `docs/vulnerabilities/VULN-01.md` … `VULN-08.md` a medida que cada una se
-   introduce (CWE, ubicación, **qué escáner la detectó realmente** contrastado con la
-   predicción, explotabilidad, fix correcto, link al run de CI).
+2. Crear `docs/vulnerabilities/VULN-0N.md` a medida que cada una se introduce (CWE,
+   ubicación, **qué escáner la detectó realmente** contrastado con la predicción,
+   explotabilidad, fix correcto, link al run de CI). **VULN-01 ya lo tiene**, más un runbook
+   de explotación reproducible (`VULN-01-explotacion.md`); usarlo de plantilla para las demás.
 3. Confirmar si `devsecops-terraform-pipeline` ya tiene la referencia cruzada al README de
    este repo (pendiente de verificar, no de crear).
 4. Deuda menor del pipeline, no urgente: las actions van varias mayores atrás
