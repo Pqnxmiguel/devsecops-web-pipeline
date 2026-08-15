@@ -30,7 +30,12 @@ Repo: https://github.com/Pqnxmiguel/devsecops-web-pipeline (público). Repo herm
   - `main` → push → **corrida en verde** (código limpio, el pipeline no molesta).
   - `vuln/VULN-01-command-injection` → push → **corrida en rojo** (los SAST detectan y
     bloquean). La rama lleva su propio fix de `nanoid` (cherry-pick), así su único rojo es el
-    SAST. Runbook completo: `docs/vulnerabilities/VULN-01-explotacion.md`.
+    SAST.
+- **Runbook de explotación — NO versionado, a propósito.** El paso a paso de explotación se
+  mantiene como archivo **local** (`docs/vulnerabilities/VULN-01-explotacion.md`, ignorado vía
+  `.git/info/exclude`), porque contiene rutas y nombre de la máquina del operador. **No debe
+  commitearse ni pushearse a ningún repo público.** Si hiciera falta versionar un runbook,
+  primero sanitizar (reemplazar rutas absolutas y usuario/equipo por marcadores genéricos).
   - Para VULN-02…08: se ramifica desde `main`, se introduce la vulnerabilidad, se pushea. Como
     `main` ya trae la regla y el fix de nanoid, cada rama nueva los hereda. **No hace falta
     rebase.**
@@ -67,8 +72,9 @@ Repo: https://github.com/Pqnxmiguel/devsecops-web-pipeline (público). Repo herm
 - Vulnerabilidades intencionales: **VULN-01 (CWE-78) implementada** en la rama
   `vuln/VULN-01-command-injection` — `POST /api/diagnose/dns` en
   `backend/src/controllers/diagnosticsController.js`, con `exec()` interpolando el input sin
-  validar. Documentada en `docs/vulnerabilities/VULN-01.md` (análisis) y
-  `VULN-01-explotacion.md` (runbook). **VULN-02…08 aún no.** `main` sigue limpio.
+  validar. Documentada en `docs/vulnerabilities/VULN-01.md` (análisis; el runbook de
+  explotación se mantiene local y sin versionar — ver §2). **VULN-02…08 aún no.** `main` sigue
+  limpio.
 
 ### Frontend (`frontend/`)
 - Interfaz de **chat con la mascota** (no formulario+panel como decía el plan original): el
@@ -200,13 +206,12 @@ veredicto, no es un bug.)
 ## 6. Qué falta — en orden
 
 0. **VULN-01 (CWE-78) — HECHA, pendiente de lanzar la corrida de demo.** Está en su rama con
-   código, tests, análisis (`VULN-01.md`) y runbook (`VULN-01-explotacion.md`). En el run
-   previo de la rama, **ambos SAST la detectaron y bloquearon** (CodeQL
-   `js/command-line-injection`, Semgrep `detect-child-process`, ambos `error`, en la llamada a
-   `exec` de `diagnosticsController.js`); npm audit y tests en verde. Lo que queda es la demo
-   de dos pushes (§2): `main` en verde, la rama de VULN-01 en rojo. Al lanzarla, rellenar el
-   "Registro de la corrida real" al final de `VULN-01-explotacion.md` y la fila "Detección
-   real" de `VULN-01.md`.
+   código, tests y análisis (`VULN-01.md`); el runbook de explotación se mantiene local y sin
+   versionar (§2). En el run previo de la rama, **ambos SAST la detectaron y bloquearon**
+   (CodeQL `js/command-line-injection`, Semgrep `detect-child-process`, ambos `error`, en la
+   llamada a `exec` de `diagnosticsController.js`); npm audit y tests en verde. Lo que queda es
+   la demo de dos pushes (§2): `main` en verde, la rama de VULN-01 en rojo. Al lanzarla,
+   rellenar la fila "Detección real" de `VULN-01.md`.
 
 1. **Introducir VULN-02 … VULN-08, una por una**, cada una en su propia rama **ramificada
    desde `main`**, contra el pipeline ya funcionando, para demostrar
@@ -243,8 +248,9 @@ veredicto, no es un bug.)
    - Al implementar VULN-01/02/03/08: hacerlo con `USE_MOCK_SOURCES=true`.
 2. Crear `docs/vulnerabilities/VULN-0N.md` a medida que cada una se introduce (CWE,
    ubicación, **qué escáner la detectó realmente** contrastado con la predicción,
-   explotabilidad, fix correcto, link al run de CI). **VULN-01 ya lo tiene**, más un runbook
-   de explotación reproducible (`VULN-01-explotacion.md`); usarlo de plantilla para las demás.
+   explotabilidad, fix correcto, link al run de CI). **VULN-01 ya lo tiene** (`VULN-01.md`);
+   usarlo de plantilla para las demás. El runbook de explotación paso a paso se mantiene
+   **local y sin versionar** (contiene rutas de la máquina — ver §2).
 3. Confirmar si `devsecops-terraform-pipeline` ya tiene la referencia cruzada al README de
    este repo (pendiente de verificar, no de crear).
 4. Deuda menor del pipeline, no urgente: las actions van varias mayores atrás

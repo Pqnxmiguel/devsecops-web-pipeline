@@ -11,8 +11,9 @@
 > la notificación a Discord (secret `BOTDEVSECWEB`, no el nombre que aparece más abajo en
 > este documento). **En curso: las `VULN-NN`, una por rama. VULN-01 (CWE-78, inyección de
 > comandos) ya está introducida** —documentada en
-> [`docs/vulnerabilities/VULN-01.md`](docs/vulnerabilities/VULN-01.md), con runbook de
-> explotación reproducible en `VULN-01-explotacion.md`—; faltan VULN-02…08. Auditando VULN-01
+> [`docs/vulnerabilities/VULN-01.md`](docs/vulnerabilities/VULN-01.md)—; faltan VULN-02…08.
+> (El runbook de explotación paso a paso se mantiene local y sin versionar: contiene rutas de
+> la máquina del operador.) Auditando VULN-01
 > se descubrió que ningún pack de Semgrep detecta inyección de comandos en ESM, y hubo que
 > sumar una regla suelta al pipeline; las limitaciones de cada escáner quedaron en
 > [`docs/escaneres-alcance-y-limites.md`](docs/escaneres-alcance-y-limites.md). El inventario

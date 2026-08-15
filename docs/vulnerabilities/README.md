@@ -36,10 +36,10 @@ Si el pipeline reportara ruido sobre código limpio, ninguna VULN-NN posterior s
 distinguible de ese ruido.
 
 **VULN-01 (CWE-78) ya está introducida** en la rama `vuln/VULN-01-command-injection` (su
-detalle, `VULN-01.md` y el runbook `VULN-01-explotacion.md`, vive en esa rama). En el run de
-la rama, **CodeQL y Semgrep la detectaron y bloquearon** en la llamada a `exec` de
-`diagnosticsController.js` — confirmando la predicción de la fila 01 de §2. Faltan
-VULN-02…08.
+análisis, `VULN-01.md`, vive en esa rama; el runbook de explotación se mantiene local y sin
+versionar porque contiene rutas de la máquina). En el run de la rama, **CodeQL y Semgrep la
+detectaron y bloquearon** en la llamada a `exec` de `diagnosticsController.js` — confirmando
+la predicción de la fila 01 de §2. Faltan VULN-02…08.
 
 ---
 
