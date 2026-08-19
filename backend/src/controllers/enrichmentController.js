@@ -39,10 +39,18 @@ const HASH_FIELD_BY_ALGORITHM = Object.freeze({
 // El literal es una cadena aleatoria generada para esta demo. NO es la
 // credencial de ningun proveedor, no funciona contra abuse.ch, y no comparte
 // formato con ninguna key real del operador (ver la auditoria de fugas en
-// handoff.md). Tampoco lleva marcas tipo "FAKE"/"EXAMPLE" en el valor: las
-// reglas genericas de secretos descartan por lista de palabras esos
-// marcadores, y con ellos la vulnerabilidad quedaria invisible para el escaner
-// pese a ser identica. La marca va en este comentario, no en el literal.
+// handoff.md): 32 alfanumericos mixtos, que ademas no matchean el patron de
+// ningun proveedor reconocido -- si lo hicieran, push protection rechazaria el
+// push de la rama y el pipeline no llegaria a escanear nada.
+//
+// ⚠️ NO RENOMBRAR ESTA CONSTANTE A `..._AUTH_KEY`. Ese seria el nombre natural
+// (la cabecera se llama `Auth-Key` y la variable de entorno hermana es
+// `URLHAUS_AUTH_KEY`), y apagaria la deteccion sin que nada falle. La regla que
+// detecta esto es `node_api_key` de njsscan, y su condicion es el NOMBRE del
+// identificador: exige que contenga `api_key`/`apikey`. No mira el valor -- no
+// hay umbral de entropia, ni de longitud, ni lista de descarte de "FAKE". Es
+// decir: quien "limpie" este nombre deja la vulnerabilidad intacta y el
+// pipeline en verde. Medido, no supuesto: ver VULN-02.md §4.
 //
 // Fix correcto (el que iria en produccion): anadir `urlhausAuthKey` como
 // dependencia del controller y leerla de `config`, exactamente igual que

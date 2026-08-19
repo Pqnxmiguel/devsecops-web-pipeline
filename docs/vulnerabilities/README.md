@@ -63,13 +63,34 @@ rama en la que se lea. La versión de `main` es la que describe la línea base l
 | VULN | CWE | CodeQL | Semgrep | npm audit | ¿Bloquearía? |
 |---|---|---|---|---|---|
 | 01 | 78 — `exec()` con input | ✅ `js/command-line-injection` | ✅ `detect-child-process` | — | **Sí, doble** |
-| 02 | 798 — API key hardcodeada | ❌ probable | ⚠️ depende del literal | — | Frágil |
+| 02 | 798 — API key hardcodeada | ❌ probable (sin confirmar) | ✅ `node_api_key` (njsscan) — **depende del NOMBRE**, no del literal | — | **Sí (Semgrep)** |
 | 03 | 95 — `eval()` sobre input | ✅ `js/code-injection` | ✅ `detect-eval-with-expression` | — | **Sí, doble** |
 | 04 | 942 — CORS `*` | ❌ | ⚠️ `header_cors_star` (njsscan) | — | Depende de cómo se escriba |
 | 05 | 770 — sin rate limiting | ⚠️ improbable | ❌ | — | **Probablemente NO** |
 | 06 | — dependencia con CVE | — | — | ⚠️ solo si es high/critical | Condicional |
 | 07 | 79 — `dangerouslySetInnerHTML` | ⚠️ requiere source modelado | ✅ `react-dangerouslysetinnerhtml` | — | **Sí (Semgrep)** |
 | 08 | 200 — key en el bundle | ❌ | ⚠️ depende del literal | — | **Probablemente NO** |
+
+### La fila 02 ya se corrigió, y la corrección es el hallazgo
+
+La predicción original decía que VULN-02 la vería la "regla genérica de API key" de
+`p/secrets`. **Esa regla no existe en el pack.** `p/secrets` son ~52 reglas de patrón de
+proveedor concreto (AWS, Stripe, Slack, Twilio…) más JWT ligado a librerías; sobre un
+secreto que no es de ningún proveedor de la lista, aporta **cero hallazgos**. Quien la
+detecta es `p/nodejsscan`, el pack del que se había predicho que no aportaría nada.
+
+Y la condición de detección no es la que se suponía: `node_api_key` mira el **nombre del
+identificador** (exige que contenga `api_key`/`apikey`), no el valor — sin entropía, sin
+longitud mínima, sin listas de descarte. Renombrar la constante a `…_AUTH_KEY` deja la
+vulnerabilidad intacta y el pipeline en verde. Medido, no supuesto: ver
+[`VULN-02.md`](VULN-02.md) §4.
+
+Nota de método: **Semgrep sí corre en Windows**, en contra de lo que dice
+[`handoff.md`](../../handoff.md). `pip install semgrep==1.172.0` instala rueda `win_amd64` y
+ejecuta la configuración completa del pipeline en local en ~1 minuto (hace falta
+`PYTHONUTF8=1`, o el volcado del SARIF revienta con `UnicodeEncodeError` por los emojis de
+las reglas — es la consola de Windows, no el pipeline). Cada VULN-NN se puede validar
+**antes** de pushear, en vez de descubrirlo en CI.
 
 ### VULN-05 es el hueco estructural, y es el hallazgo más interesante
 
