@@ -15,6 +15,7 @@ import { validateScanBody, validatePagination } from '../middleware/validateRequ
  * @param {ReturnType<import('../controllers/scanController.js').createScanController>} deps.scanController
  * @param {ReturnType<import('../controllers/historyController.js').createHistoryController>} deps.historyController
  * @param {ReturnType<import('../controllers/quotaController.js').createQuotaController>} deps.quotaController
+ * @param {ReturnType<import('../controllers/scoringController.js').createScoringController>} deps.scoringController
  */
 export function createApiRouter({
   config,
@@ -22,6 +23,7 @@ export function createApiRouter({
   scanController,
   historyController,
   quotaController,
+  scoringController,
 }) {
   const router = Router();
 
@@ -34,6 +36,12 @@ export function createApiRouter({
   router.get('/history', validatePagination(config), historyController.listHistory);
 
   router.get('/quota', quotaController.getQuota);
+
+  // El cuerpo es `{ formula }` y no `{ value }`, asi que no pasa por
+  // `validateScanBody`; el controller valida solo la forma (que sea una
+  // cadena no vacia), no el contenido. VULN-03 es CWE-95 y nada mas.
+  // Ver docs/vulnerabilities/VULN-03.md
+  router.post('/score/custom', scoringController.computeCustomScore);
 
   return router;
 }

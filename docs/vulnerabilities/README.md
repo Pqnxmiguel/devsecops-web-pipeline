@@ -14,7 +14,7 @@ vulnerabilidad que sabemos que está ahí enseña más que uno que la detecta.
 
 ---
 
-## 1. Estado: VULN-01 introducida en su rama; VULN-02…08 pendientes
+## 1. Estado: VULN-01, VULN-02 y VULN-03 introducidas, cada una en su rama; VULN-04…08 pendientes
 
 `main` sigue siendo la **línea base limpia** (sin vulnerabilidades), verificada en CI:
 
@@ -39,7 +39,23 @@ distinguible de ese ruido.
 análisis, `VULN-01.md`, vive en esa rama; el runbook de explotación se mantiene local y sin
 versionar porque contiene rutas de la máquina). En el run de la rama, **CodeQL y Semgrep la
 detectaron y bloquearon** en la llamada a `exec` de `diagnosticsController.js` — confirmando
-la predicción de la fila 01 de §2. Faltan VULN-02…08.
+la predicción de la fila 01 de §2.
+
+**VULN-02 (CWE-798) está introducida** en la rama `vuln/VULN-02-hardcoded-api-key`: una
+`Auth-Key` de abuse.ch escrita en `enrichmentController.js` en vez de leerse de configuración.
+Sólo Semgrep la detectó, y no con la regla predicha — ver `VULN-02.md` en esa rama.
+
+**VULN-03 (CWE-95) está introducida** en la rama `vuln/VULN-03-eval-injection`: un `eval()`
+sobre una fórmula de puntuación en `scoringController.js`
+(`POST /api/score/custom`). Medido en local antes de pushear: Semgrep bloquea, pero con
+`javascript.lang.security.audit.code-string-concat.code-string-concat` — no con la
+`detect-eval-with-expression` que predecía la fila 03 de §2, que **no dispara sobre ninguna
+variante probada**. CodeQL queda pendiente del run de CI. Análisis completo en `VULN-03.md`.
+
+Cada rama diverge de `main` y no se mezcla de vuelta con las demás — este documento describe
+un estado distinto según en qué rama se lea. Las correcciones de fila que siguen abajo son
+propias de esta rama (VULN-03); las de VULN-01 y VULN-02 viven en sus branches respectivos y
+no se traen aquí a propósito. Faltan VULN-04…08.
 
 ---
 
@@ -55,12 +71,32 @@ la predicción de la fila 01 de §2. Faltan VULN-02…08.
 |---|---|---|---|---|---|
 | 01 | 78 — `exec()` con input | ✅ `js/command-line-injection` | ✅ `detect-child-process` | — | **Sí, doble** |
 | 02 | 798 — API key hardcodeada | ❌ probable | ⚠️ depende del literal | — | Frágil |
-| 03 | 95 — `eval()` sobre input | ✅ `js/code-injection` | ✅ `detect-eval-with-expression` | — | **Sí, doble** |
+| 03 | 95 — `eval()` sobre input | ✅ `js/code-injection` (sin confirmar) | ✅ **medido**, pero `code-string-concat` (taint), **no** `detect-eval-with-expression` — ver §2.1 | — | **Sí (Semgrep confirmado)** |
 | 04 | 942 — CORS `*` | ❌ | ⚠️ `header_cors_star` (njsscan) | — | Depende de cómo se escriba |
 | 05 | 770 — sin rate limiting | ⚠️ improbable | ❌ | — | **Probablemente NO** |
 | 06 | — dependencia con CVE | — | — | ⚠️ solo si es high/critical | Condicional |
 | 07 | 79 — `dangerouslySetInnerHTML` | ⚠️ requiere source modelado | ✅ `react-dangerouslysetinnerhtml` | — | **Sí (Semgrep)** |
 | 08 | 200 — key en el bundle | ❌ | ⚠️ depende del literal | — | **Probablemente NO** |
+
+### 2.1 — La fila 03 ya se corrigió: el nombre de una regla no es su especificación
+
+La predicción original decía que `detect-eval-with-expression` detectaría VULN-03 — el nombre
+sugiere exactamente ese caso ("eval con una expresión, no un literal"). Medido en local antes
+de pushear: **esa regla no dispara**, ni siquiera en variantes triviales (`eval(x)`,
+`eval(req.body.formula)` inline, `eval(x + y)` con concatenación explícita). Probado de forma
+aislada contra ocho variantes distintas, cero hallazgos en todas.
+
+Quien detecta VULN-03 es `javascript.lang.security.audit.code-string-concat.code-string-concat`
+— una regla cuyo *id* sugiere "concatenación de cadenas" pero cuyo comportamiento real es
+taint tracking puro: sigue el flujo `req.body.formula → formula → eval(formula)` sin que la
+concatenación tenga nada que ver (`precision: very-high` en su propia metadata). El nombre es
+un residuo de una versión anterior de la regla. Detalle completo, con las ocho variantes
+probadas, en [`VULN-03.md`](VULN-03.md) §4.
+
+Mismo tipo de hallazgo que la fila 02 (donde `p/secrets` prometía una regla genérica que no
+existe, y quien detectaba de verdad era njsscan) — pero al revés: allí el pack equivocado no
+tenía nada; aquí el pack correcto sí tiene una regla que cubre el caso, sólo que no es la que
+su nombre hace pensar que es.
 
 ### VULN-05 es el hueco estructural, y es el hallazgo más interesante
 

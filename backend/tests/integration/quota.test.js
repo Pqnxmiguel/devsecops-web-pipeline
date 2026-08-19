@@ -62,6 +62,7 @@ describe('GET /api/quota en modo real', () => {
         },
         historyController: { listHistory: (_req, res) => res.status(200).json({}) },
         quotaController,
+        scoringController: { computeCustomScore: (_req, res) => res.status(200).json({}) },
       }),
     );
 

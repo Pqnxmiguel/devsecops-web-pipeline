@@ -21,6 +21,7 @@ import { createHealthController } from './controllers/healthController.js';
 import { createScanController } from './controllers/scanController.js';
 import { createHistoryController } from './controllers/historyController.js';
 import { createQuotaController } from './controllers/quotaController.js';
+import { createScoringController } from './controllers/scoringController.js';
 import { createApiRouter } from './routes/index.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 
@@ -101,6 +102,7 @@ export function createApp(config = defaultConfig) {
       scanController: createScanController(scanService),
       historyController: createHistoryController(historyRepository),
       quotaController: createQuotaController({ quotaTracker, config }),
+      scoringController: createScoringController(),
     }),
   );
 
