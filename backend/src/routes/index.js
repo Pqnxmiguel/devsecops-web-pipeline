@@ -15,6 +15,7 @@ import { validateScanBody, validatePagination } from '../middleware/validateRequ
  * @param {ReturnType<import('../controllers/scanController.js').createScanController>} deps.scanController
  * @param {ReturnType<import('../controllers/historyController.js').createHistoryController>} deps.historyController
  * @param {ReturnType<import('../controllers/quotaController.js').createQuotaController>} deps.quotaController
+ * @param {ReturnType<import('../controllers/enrichmentController.js').createEnrichmentController>} deps.enrichmentController
  */
 export function createApiRouter({
   config,
@@ -22,6 +23,7 @@ export function createApiRouter({
   scanController,
   historyController,
   quotaController,
+  enrichmentController,
 }) {
   const router = Router();
 
@@ -34,6 +36,12 @@ export function createApiRouter({
   router.get('/history', validatePagination(config), historyController.listHistory);
 
   router.get('/quota', quotaController.getQuota);
+
+  // El cuerpo es `{ hash }` y no `{ value }`, asi que no pasa por
+  // `validateScanBody`: el propio controller valida el hash con `hashAlgorithm()`
+  // antes de usarlo. VULN-02 es CWE-798 y nada mas -- aqui no falta validacion.
+  // Ver docs/vulnerabilities/VULN-02.md
+  router.post('/enrich/payload', enrichmentController.enrichPayload);
 
   return router;
 }

@@ -14,7 +14,7 @@ vulnerabilidad que sabemos que está ahí enseña más que uno que la detecta.
 
 ---
 
-## 1. Estado: VULN-01 introducida en su rama; VULN-02…08 pendientes
+## 1. Estado: VULN-01 y VULN-02 introducidas en sus ramas; VULN-03…08 pendientes
 
 `main` sigue siendo la **línea base limpia** (sin vulnerabilidades), verificada en CI:
 
@@ -39,7 +39,16 @@ distinguible de ese ruido.
 análisis, `VULN-01.md`, vive en esa rama; el runbook de explotación se mantiene local y sin
 versionar porque contiene rutas de la máquina). En el run de la rama, **CodeQL y Semgrep la
 detectaron y bloquearon** en la llamada a `exec` de `diagnosticsController.js` — confirmando
-la predicción de la fila 01 de §2. Faltan VULN-02…08.
+la predicción de la fila 01 de §2.
+
+**VULN-02 (CWE-798) está introducida** en la rama `vuln/VULN-02-hardcoded-api-key`: una
+`Auth-Key` de abuse.ch escrita en `enrichmentController.js` en vez de leerse de configuración
+(`POST /api/enrich/payload`). Su análisis vive en [`VULN-02.md`](VULN-02.md) de esa rama, y su
+fila de "detección real" se rellena con el resultado del run. Faltan VULN-03…08.
+
+Nota sobre esta rama: `main` no incluye ninguna de las dos. Cada vulnerabilidad se ramifica
+desde `main` y no se mezcla de vuelta, así que este documento dice cosas distintas según la
+rama en la que se lea. La versión de `main` es la que describe la línea base limpia.
 
 ---
 

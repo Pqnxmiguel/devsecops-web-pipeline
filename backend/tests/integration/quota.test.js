@@ -62,6 +62,7 @@ describe('GET /api/quota en modo real', () => {
         },
         historyController: { listHistory: (_req, res) => res.status(200).json({}) },
         quotaController,
+        enrichmentController: { enrichPayload: (_req, res) => res.status(200).json({}) },
       }),
     );
 
