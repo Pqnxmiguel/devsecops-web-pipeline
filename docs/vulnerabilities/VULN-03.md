@@ -8,7 +8,8 @@
 | **Endpoint** | `POST /api/score/custom` |
 | **Ruta** | `backend/src/routes/index.js` — registrada sin `validateScanBody`, a propósito (el cuerpo es `{ formula }`, no `{ value }`) |
 | **Detección esperada (medida en local antes de pushear)** | Semgrep — `javascript.lang.security.audit.code-string-concat.code-string-concat` (`error`, bloquea). CodeQL — `js/code-injection`, pendiente de confirmar en CI |
-| **Detección real** | _pendiente — se completa con el resultado del run de CI_ |
+| **Detección real** | Semgrep ✅ y CodeQL ✅ confirmados — **doble bloqueo**, ambos en `scoringController.js:61` |
+| **Run de CI** | [32307927287](https://github.com/Pqnxmiguel/devsecops-web-pipeline/actions/runs/32307927287) — CodeQL y Semgrep en rojo, resto en verde, Discord entregado |
 
 ---
 
@@ -150,15 +151,22 @@ especificador "correcto" para un import. La lección no es "cuidado con cómo es
 es que **el nombre de la regla que promete cubrir un caso no es garantía de que lo cubra, y el
 que sí lo cubre puede no ser el que suena más específico.**
 
-### Predicción para CodeQL (pendiente de confirmar en CI)
+### CodeQL: la predicción se confirmó
 
-No se pudo ejecutar CodeQL en local (sin Docker en esta máquina). La predicción de
-[`README.md`](README.md) §2 es ✅ `js/code-injection`, y el razonamiento es el mismo que dio
+No se pudo ejecutar CodeQL en local (sin Docker en esta máquina), así que quedó pendiente
+hasta el run de CI. [El run](https://github.com/Pqnxmiguel/devsecops-web-pipeline/actions/runs/32307927287)
+confirmó la predicción sin corrección: `js/code-injection` disparó, en la misma línea exacta
+que Semgrep (`scoringController.js:61`). El razonamiento que la sostenía era el mismo que dio
 buen resultado en VULN-01: hay un flujo de taint **directo**, sin saltos ni indirecciones —
 `req.body.formula` (fuente remota reconocida) hasta `eval()` (sink de ejecución de código
-conocido), con una sola asignación intermedia. Es la forma de mayor precisión para esa
-consulta. Si no dispara, la corrección de esta predicción es, como siempre en este proyecto,
-el hallazgo — no un fracaso.
+conocido), con una sola asignación intermedia (`const { formula } = req.body ?? {}`). Es la
+forma de mayor precisión para esa consulta, y el resultado lo confirma.
+
+**VULN-03 es, de las tres vulnerabilidades introducidas hasta ahora, la primera con doble
+bloqueo confirmado** (CodeQL y Semgrep, igual que se predijo — y el mismo patrón de VULN-01,
+aunque con la sorpresa del §4 de arriba sobre cuál regla exacta de Semgrep dispara). VULN-02
+sólo tuvo un bloqueante de los dos. Ni siquiera necesitó una sintaxis cuidada para eso: el
+código se escribió de la forma más natural posible.
 
 ## 5. Tests
 

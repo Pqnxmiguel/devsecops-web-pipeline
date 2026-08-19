@@ -47,10 +47,14 @@ Sólo Semgrep la detectó, y no con la regla predicha — ver `VULN-02.md` en es
 
 **VULN-03 (CWE-95) está introducida** en la rama `vuln/VULN-03-eval-injection`: un `eval()`
 sobre una fórmula de puntuación en `scoringController.js`
-(`POST /api/score/custom`). Medido en local antes de pushear: Semgrep bloquea, pero con
-`javascript.lang.security.audit.code-string-concat.code-string-concat` — no con la
-`detect-eval-with-expression` que predecía la fila 03 de §2, que **no dispara sobre ninguna
-variante probada**. CodeQL queda pendiente del run de CI. Análisis completo en `VULN-03.md`.
+(`POST /api/score/custom`). En su
+[run](https://github.com/Pqnxmiguel/devsecops-web-pipeline/actions/runs/32307927287),
+**CodeQL y Semgrep la detectaron y bloquearon los dos** — mismo doble bloqueo que VULN-01,
+primera vez que se repite desde entonces. Semgrep, medido en local antes de pushear, no bloqueó
+con la regla que predecía la fila 03 de §2 (`detect-eval-with-expression`, que **no dispara
+sobre ninguna variante probada**) sino con
+`javascript.lang.security.audit.code-string-concat.code-string-concat`. Análisis completo en
+`VULN-03.md`.
 
 Cada rama diverge de `main` y no se mezcla de vuelta con las demás — este documento describe
 un estado distinto según en qué rama se lea. Las correcciones de fila que siguen abajo son
@@ -71,7 +75,7 @@ no se traen aquí a propósito. Faltan VULN-04…08.
 |---|---|---|---|---|---|
 | 01 | 78 — `exec()` con input | ✅ `js/command-line-injection` | ✅ `detect-child-process` | — | **Sí, doble** |
 | 02 | 798 — API key hardcodeada | ❌ probable | ⚠️ depende del literal | — | Frágil |
-| 03 | 95 — `eval()` sobre input | ✅ `js/code-injection` (sin confirmar) | ✅ **medido**, pero `code-string-concat` (taint), **no** `detect-eval-with-expression` — ver §2.1 | — | **Sí (Semgrep confirmado)** |
+| 03 | 95 — `eval()` sobre input | ✅ **confirmado en CI** `js/code-injection` | ✅ **confirmado**, pero `code-string-concat` (taint), **no** `detect-eval-with-expression` — ver §2.1 | — | **Sí, doble — confirmado** |
 | 04 | 942 — CORS `*` | ❌ | ⚠️ `header_cors_star` (njsscan) | — | Depende de cómo se escriba |
 | 05 | 770 — sin rate limiting | ⚠️ improbable | ❌ | — | **Probablemente NO** |
 | 06 | — dependencia con CVE | — | — | ⚠️ solo si es high/critical | Condicional |
