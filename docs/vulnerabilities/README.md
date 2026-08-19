@@ -43,8 +43,11 @@ la predicción de la fila 01 de §2.
 
 **VULN-02 (CWE-798) está introducida** en la rama `vuln/VULN-02-hardcoded-api-key`: una
 `Auth-Key` de abuse.ch escrita en `enrichmentController.js` en vez de leerse de configuración
-(`POST /api/enrich/payload`). Su análisis vive en [`VULN-02.md`](VULN-02.md) de esa rama, y su
-fila de "detección real" se rellena con el resultado del run. Faltan VULN-03…08.
+(`POST /api/enrich/payload`). En su
+[run](https://github.com/Pqnxmiguel/devsecops-web-pipeline/actions/runs/32214541599),
+**sólo Semgrep la detectó** (`node_api_key`, `error`, bloqueó); **CodeQL devolvió 0
+hallazgos**, confirmando la predicción ❌ de la fila 02. Análisis completo en
+[`VULN-02.md`](VULN-02.md). Faltan VULN-03…08.
 
 Nota sobre esta rama: `main` no incluye ninguna de las dos. Cada vulnerabilidad se ramifica
 desde `main` y no se mezcla de vuelta, así que este documento dice cosas distintas según la
@@ -63,7 +66,7 @@ rama en la que se lea. La versión de `main` es la que describe la línea base l
 | VULN | CWE | CodeQL | Semgrep | npm audit | ¿Bloquearía? |
 |---|---|---|---|---|---|
 | 01 | 78 — `exec()` con input | ✅ `js/command-line-injection` | ✅ `detect-child-process` | — | **Sí, doble** |
-| 02 | 798 — API key hardcodeada | ❌ probable (sin confirmar) | ✅ `node_api_key` (njsscan) — **depende del NOMBRE**, no del literal | — | **Sí (Semgrep)** |
+| 02 | 798 — API key hardcodeada | ❌ **confirmado: 0 hallazgos** | ✅ `node_api_key` (njsscan) — **depende del NOMBRE**, no del literal | — | **Sí (solo Semgrep)** |
 | 03 | 95 — `eval()` sobre input | ✅ `js/code-injection` | ✅ `detect-eval-with-expression` | — | **Sí, doble** |
 | 04 | 942 — CORS `*` | ❌ | ⚠️ `header_cors_star` (njsscan) | — | Depende de cómo se escriba |
 | 05 | 770 — sin rate limiting | ⚠️ improbable | ❌ | — | **Probablemente NO** |

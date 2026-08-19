@@ -8,7 +8,8 @@
 | **Endpoint** | `POST /api/enrich/payload` |
 | **Ruta** | `backend/src/routes/index.js` — registrada con validación completa, a propósito |
 | **Detección esperada** | Semgrep — `ajinabraham.njsscan.generic.hardcoded_secrets.node_api_key` (`p/nodejsscan`, `error`). CodeQL improbable (`js/hardcoded-credentials`) |
-| **Detección real** | Semgrep ✅ confirmado en corrida local (§4); CodeQL _pendiente del run de CI_ |
+| **Detección real** | Semgrep ✅ `node_api_key` (`error`, bloqueó). CodeQL ❌ **0 hallazgos** — predicción confirmada |
+| **Run de CI** | [32214541599](https://github.com/Pqnxmiguel/devsecops-web-pipeline/actions/runs/32214541599) — Semgrep en rojo, resto en verde, Discord entregado |
 
 ---
 
@@ -162,13 +163,32 @@ Y no lleva marcas `FAKE`/`EXAMPLE` porque una demo con un valor realista es más
 queda a merced de las listas de descarte que otras reglas sí tienen — pero eso es criterio,
 no una condición de detección.
 
-Pendiente de confirmar en CI:
+### Lo que dijo el run de CI
 
-- **CodeQL** — `js/hardcoded-credentials` existe en `security-extended`, pero exige que el
-  literal llegue a una posición que su modelo reconozca como credencial. Aquí el valor se pasa
-  como propiedad `'Auth-Key'` de un objeto de cabeceras, no como argumento de una API de
-  autenticación conocida. La predicción de [`README.md`](README.md) §2 dice ❌; si dispara,
-  la predicción se corrige y eso es el hallazgo.
+[Run 32214541599](https://github.com/Pqnxmiguel/devsecops-web-pipeline/actions/runs/32214541599),
+idéntico a la medición local:
+
+| Escáner | Resultado |
+|---|---|
+| Semgrep (235 reglas, 94 archivos) | 8 hallazgos, **1 bloqueante** → job en rojo |
+| CodeQL `security-extended` | **0 hallazgos** |
+| npm audit backend / frontend | 0 / 0 |
+| Tests y build | verde |
+| Discord | entregado |
+
+Los otros 7 hallazgos de Semgrep son los `good_helmet_checks` de la línea base (`note`, no
+bloquean). El único bloqueante es `node_api_key` sobre `enrichmentController.js`.
+
+**CodeQL no la ve, y la predicción ❌ queda confirmada.** `js/hardcoded-credentials` existe en
+`security-extended`, pero exige que el literal llegue a una posición que su modelo reconozca
+como credencial. Aquí el valor se pasa como propiedad `'Auth-Key'` de un objeto de cabeceras
+—una cabecera HTTP arbitraria desde el punto de vista del análisis—, no como argumento de una
+API de autenticación conocida. El contraste con VULN-01 es la lección: allí CodeQL fue el
+detector **más** fiable de los dos, porque había un flujo de taint que seguir; aquí no hay
+flujo que seguir, sólo un literal, y el escáner que gana es el que empareja texto.
+
+**Una credencial hardcodeada en un repo público la detecta una sola de las cuatro
+herramientas, por el nombre de una variable.** Ése es el resultado de VULN-02.
 
 ## 5. Tests
 
